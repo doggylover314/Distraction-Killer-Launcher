@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the Compose surface colour so there is no flash of the wrong
+         shade while the activity window is being created. -->
+    <color name="window_background">#FFFDFCFF</color>
+    <color name="ic_launcher_background">#FF1B1B1F</color>
+</resources>

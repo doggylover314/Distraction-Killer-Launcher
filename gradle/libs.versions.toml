@@ -1,0 +1,35 @@
+# Every version below was checked against the live Maven metadata on
+# dl.google.com / repo1.maven.org rather than recalled from memory.
+# Newer releases exist; these are pinned deliberately because they are the
+# newest set that still compiles cleanly against compileSdk 35 (several
+# 2025-H2 AndroidX releases require compileSdk 36).
+[versions]
+agp = "8.12.3"
+kotlin = "2.2.20"
+coreKtx = "1.16.0"
+lifecycleRuntimeKtx = "2.9.2"
+activityCompose = "1.10.1"
+composeBom = "2025.06.01"
+junit = "4.13.2"
+# Desktop implementation of org.json. Android ships org.json in the platform,
+# but the JVM unit-test classpath only has stubs that throw, so tests need a
+# real implementation. Test-only dependency; it is not in the APK.
+json = "20250107"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-ui = { group = "androidx.compose.ui", name = "ui" }
+androidx-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+androidx-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+androidx-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+androidx-material3 = { group = "androidx.compose.material3", name = "material3" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and below. Nothing is backed up: the only thing this app stores
+     is a password hash and two lists of package names, and copying those into
+     a cloud backup buys nothing. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>

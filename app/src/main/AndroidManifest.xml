@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Only used by the optional weather line in the home-screen header.
+         If you turn weather off in Settings the app never touches the network,
+         and it never asks for location. There is no analytics or ad SDK. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Package visibility filtering (Android 11 / API 30 and up): without this
+         block PackageManager would only report a handful of packages, so the
+         app list would come back nearly empty on a modern device. Declaring the
+         MAIN/LAUNCHER intent is the documented way for a launcher to see every
+         launchable app; it avoids needing the restricted QUERY_ALL_PACKAGES
+         permission. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.DIAL" />
+        </intent>
+        <intent>
+            <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
+        </intent>
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FocusHome"
+        android:enableOnBackInvokedCallback="false"
+        tools:ignore="UnusedAttribute">
+
+        <!-- NOTE (API level uncertainty): android:enableOnBackInvokedCallback
+             controls predictive back. I am not certain whether Android 15 / API
+             35 flips its default to true for apps targeting 35, so it is set
+             explicitly here instead of relying on the default. false keeps the
+             classic OnBackPressedDispatcher path, which is what the home
+             screen's "swallow back" handler uses. Verify against the current
+             predictive-back docs if you care about the animation. -->
+
+        <activity
+            android:name=".HomeActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.FocusHome">
+
+            <!-- This filter is what makes the app selectable as a home screen. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- Kept separate so the app also shows up in your *current*
+                 launcher's app drawer. Handy before you switch the default
+                 home app over, and as a way back in afterwards. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- exported=false: nothing outside this app can start the settings
+             screen, so the password gate cannot be bypassed with an intent.
+             noHistory=true re-locks it as soon as it leaves the foreground. -->
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.FocusHome" />
+    </application>
+
+</manifest>
