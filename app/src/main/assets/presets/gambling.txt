@@ -2,7 +2,7 @@
 # Source: https://raw.githubusercontent.com/StevenBlack/hosts/master/extensions/gambling/sinfonietta/hosts
 # License: MIT (StevenBlack/hosts, Copyright Steven Black; extension data by Sinfonietta) - see THIRD_PARTY_NOTICES.md
 # Generated: 2026-09-06 by tools/build_presets.py
-# Upstream fetched 2026-09-06; 1541 hosts collapsed to 1474 registrable domains (eTLD+1)
+# Upstream fetched 2026-09-06; 1541 hosts -> 1454 registrable domains (eTLD+1) + 21 subdomains of shared sites upstream does not block wholesale
 
 10bet.co.uk
 10bet.com
@@ -54,7 +54,6 @@
 888.com
 888.pt
 8888.bg
-888casino.com
 888sport.com
 88asia88.com
 88sports.com
@@ -124,6 +123,8 @@ bet-52.com
 bet-at-home.com
 bet-csgo.com
 bet.co.za
+bet.hkjc.com
+bet.pkr.com
 bet1128.com
 bet11888.com
 bet2290.com
@@ -147,7 +148,6 @@ betano.cz
 betano.pt
 betanysports.eu
 betbanks.com
-betboo.com
 betboro.com
 betbright.com
 betbuckeyesports.com
@@ -180,6 +180,8 @@ betfair.com
 betfair.com.au
 betfan.pl
 betfinal.com
+betfirst-en.dhnet.be
+betfirst.dhnet.be
 betfirstcasino.be
 betflag.com
 betflash.co.za
@@ -312,7 +314,6 @@ bingoyard.com
 bitcoinrush.io
 bitcoinsports.eu
 bitsaloon.com
-bkbet.eu
 blancoshrimp.com
 bobcasino.com
 bobetting.com
@@ -391,7 +392,6 @@ casinostugan.com
 casinotown.se
 casinowinner.com
 casinsi.com
-casiplay.com
 casumo.com
 cbet.lt
 cbmsport.com
@@ -530,6 +530,8 @@ daftar-klik4d.com
 daftar-klik4d.net
 daftarbetplace88.com
 daftarbetplace88.net
+daftarpokeronline.kissr.com
+daftarsbobet.freeoda.com
 dailydime.eu
 daisybingo.com
 dakotacasino.com
@@ -542,7 +544,6 @@ dealerscasino.com
 depositbetplace88.com
 depositbetplace88.net
 desertnightscasino.co.uk
-dhnet.be
 dhoze.com
 dialabet.com.au
 diamond7casino.com
@@ -589,7 +590,6 @@ eloterija.si
 emeraldbet.com
 energybet.com
 enterbet.com
-epic.partners
 eqraffle.com
 esball.net
 espacejeux.com
@@ -604,7 +604,6 @@ etoto.pl
 euro24sports.com
 eurobet.bg
 eurofootball.bg
-eurolotto.com
 europe-bet.com
 euroslots.com
 everbet.bg
@@ -627,6 +626,8 @@ fastbet.com
 favbet.com
 favourit.com
 fdj.fr
+fi.888casino.com
+fi.casiplay.com
 fikacasino.com
 flemingtonsportsbet.com.au
 flumecasino.com
@@ -639,7 +640,6 @@ fortunelegends.com
 frankcasino.com
 frankfred.com
 freakyvegas.com
-freeoda.com
 freeslotshub.com
 fruitycasa.com
 fsl11.com
@@ -677,7 +677,6 @@ giocoreale.com
 glimmercasino.com
 globalwagering.ws
 globetworld.com
-gmx.net
 go50.net
 goalbetint.com
 goalwin.com
@@ -722,7 +721,6 @@ highlifebingo.com
 highroller.com
 hippobingo.com
 hititbet.com
-hkjc.com
 hollywoodbets.net
 hollywoodsportsbook.eu
 homerunsportsbetting.com
@@ -812,14 +810,12 @@ katiesbingo.com
 kazinoigri.com
 key-drop.com
 keyarena.gg
-kingdomcasino.com
 kingkong999.net
 kingneptunescasino.com
 kingneptunescasino.eu
 kingswaybingoonline.com
 kirsikka.com
 kissmybingo.com
-kissr.com
 klasselotteriet.dk
 klik4a.com
 klik4d.asia
@@ -902,8 +898,11 @@ lotto-sh.de
 lotto-thueringen.de
 lotto.cn
 lotto.de
+lotto.gmx.net
 lotto.is
+lotto.mthai.com
 lotto.pl
+lotto.web.de
 lotto24.de
 lotto24bingo.com
 lottohelden.de
@@ -1009,7 +1008,6 @@ mrringo.com
 mrslot.com
 mrwin.com
 msl.ua
-mthai.com
 multilotto.com
 multipasko.pl
 mvpaction.ag
@@ -1080,6 +1078,7 @@ olybet.eu
 olybet.lt
 omniacasino.com
 onetpedia.net
+online.singaporepools.com
 onlywinners.com
 opap.gr
 opcrates.com
@@ -1087,7 +1086,6 @@ optibet.com
 optibet.lt
 optionsports.com
 orakulas.lt
-orgfree.com
 orlandocasino.com
 ourpricebet.com
 overtheodds.com.au
@@ -1107,7 +1105,6 @@ parasino.com
 parimatch.com
 parimatchplay1.com
 partycasino.lt
-partypoker.com
 partypoker.cz
 pasarbola.com
 pelaa.com
@@ -1116,7 +1113,6 @@ pikakasino.com
 pinnacle.com
 pinnaclesports.com
 piratespin.com
-pkr.com
 placard.pt
 planetofbets.com
 planetwin365.com
@@ -1152,6 +1148,8 @@ primedice.com
 primeslots.com
 pro-factory.com
 proline.ca
+promotion.eurolotto.com
+promotions.epic.partners
 prontocasino.com
 propawin.com
 punchbets.com
@@ -1202,6 +1200,7 @@ sazka.cz
 sbgglobal.eu
 sbobet.com
 sbobetbola.org
+sbobetcasino.orgfree.com
 sbojoki.com
 scandibet.com
 scasino.com
@@ -1212,11 +1211,11 @@ sealjl.bar
 seangraham.com
 seaniemac.com
 sectorbet.com
+secure.bkbet.eu
 sesame.bg
 sesbet.com
 setantabet.com
 simppeli.com
-singaporepools.com
 sirbobet.com
 sirjackpot.com
 sisal.it
@@ -1245,7 +1244,6 @@ slottyvegas.com
 slotv.com
 sloty.com
 smarkets.com
-smartlivegaming.com
 smashsportsbetting.com
 snabbare.com
 socalsportbook.com
@@ -1274,6 +1272,10 @@ sportodds.com
 sportpesa.co.tz
 sportpesa.com
 sports-gambling.com
+sports.br.betboo.com
+sports.partypoker.com
+sports.smartlivegaming.com
+sports.winner.com
 sportsbet.co.za
 sportsbet.com.au
 sportsbet.io
@@ -1285,6 +1287,7 @@ sportsbook-uk.com
 sportsbook.ag
 sportsbook.ca
 sportsbook.com
+sportsbook.kingdomcasino.com
 sportsbookreview.com
 sportsbooks.com
 sportsbookusa.com
@@ -1431,7 +1434,6 @@ wagermadness.com
 wagerup.eu
 wagerweb.ag
 wagerweb.eu
-web.de
 webbookmakers.com
 webpartners.co
 westlotto.de
@@ -1450,7 +1452,6 @@ winbet.bg
 winbetaffiliates.bg
 winmasters.com
 winner.co.uk
-winner.com
 winning228.sch.id
 winningft.com
 wishmaker.com

@@ -8,7 +8,9 @@ Outputs (all under app/src/main/assets/presets/):
 Hand-curated presets are defined in this file. The "adult" and "gambling"
 presets are derived from the StevenBlack/hosts extensions (MIT), collapsed to
 registrable domains (eTLD+1) with the Public Suffix List (ICANN + PRIVATE
-sections, so shared hosting platforms stay as specific subdomains). Downloads are cached
+sections). A host is only collapsed when upstream blocks its registrable
+domain itself; subdomains of shared sites (nsfw.reddit.com, a blog on
+wordpress.com) are kept as-is so the platform is not blocked wholesale. Downloads are cached
 in tools/.cache/ so re-runs are offline and byte-for-byte reproducible.
 
 Usage:
@@ -229,19 +231,43 @@ def parse_hosts(text: str) -> tuple[set[str], int]:
     return hosts, rejected
 
 
-def collapse(hosts: set[str], psl: PublicSuffixList) -> tuple[set[str], list[str]]:
-    """Collapse each host to its registrable domain. Hosts that are themselves
-    public suffixes are dropped (blocking them would block a whole platform or
-    TLD); they are returned separately for reporting."""
+def dedupe_by_suffix(domains: set[str]) -> set[str]:
+    """Drop entries already covered by a shorter entry (the app matches by
+    suffix, so 'a.b.example.com' is redundant when 'b.example.com' is listed)."""
+    out: set[str] = set()
+    for d in domains:
+        parts = d.split(".")
+        if not any(".".join(parts[i:]) in domains for i in range(1, len(parts) - 1)):
+            out.add(d)
+    return out
+
+
+def collapse(hosts: set[str], psl: PublicSuffixList) -> tuple[set[str], list[str], dict[str, int]]:
+    """Collapse hosts to registrable domains (eTLD+1) without over-blocking.
+
+    A host is replaced by its registrable domain only when the upstream list
+    blocks that registrable domain itself. When upstream lists only specific
+    subdomains (nsfw.reddit.com, someblog.wordpress.com, a page on itch.io)
+    the subdomains are kept as-is, because collapsing them would block the
+    whole shared platform, which upstream never intended. Hosts that are
+    themselves public suffixes are dropped. Returns (domains, dropped, stats).
+    """
     out: set[str] = set()
     dropped: list[str] = []
+    protected: dict[str, int] = {}  # registrable domain kept out -> hosts kept under it
     for host in hosts:
         reg = psl.registrable(host)
         if reg is None:
             dropped.append(host)
-        else:
+        elif reg in hosts:
             out.add(reg)
-    return out, sorted(dropped)
+        else:
+            out.add(host)
+            protected[reg] = protected.get(reg, 0) + 1
+    out = dedupe_by_suffix(out)
+    deeper = sum(1 for d in out if psl.registrable(d) != d)
+    stats = {"registrable": len(out) - deeper, "deeper": deeper, "protected_parents": len(protected)}
+    return out, sorted(dropped), stats
 
 
 # ---------------------------------------------------------------------------
@@ -630,17 +656,19 @@ def build(refresh: bool, generated: str, include_private: bool) -> list[tuple[st
     for preset_id, kind, name, description, cache_name in DERIVED:
         text, fetched = fetch(cache_name, refresh)
         hosts, rejected = parse_hosts(text)
-        domains_set, dropped = collapse(hosts, psl)
+        domains_set, dropped, st = collapse(hosts, psl)
         domains = sorted(domains_set)
-        print(f"{preset_id}: {len(hosts)} hosts after normalising (rejected {rejected} malformed), "
-              f"collapsed to {len(domains)} registrable domains; "
+        print(f"{preset_id}: {len(hosts)} hosts after normalising (rejected {rejected} malformed) -> "
+              f"{len(domains)} entries: {st['registrable']} registrable domains (eTLD+1) + {st['deeper']} "
+              f"subdomains kept under {st['protected_parents']} shared domains upstream does not block; "
               f"dropped {len(dropped)} public-suffix entries"
               + (f" e.g. {', '.join(dropped[:5])}" if dropped else ""))
         source = SOURCES[cache_name]
         emit(preset_id, kind, name, description, source,
              "MIT (StevenBlack/hosts, Copyright Steven Black; extension data by Sinfonietta) - see THIRD_PARTY_NOTICES.md",
              domains,
-             [f"Upstream fetched {fetched}; {len(hosts)} hosts collapsed to {len(domains)} registrable domains (eTLD+1)"])
+             [f"Upstream fetched {fetched}; {len(hosts)} hosts -> {st['registrable']} registrable domains (eTLD+1) "
+              f"+ {st['deeper']} subdomains of shared sites upstream does not block wholesale"])
 
     for preset_id, kind, name, description, block in HAND_CURATED_ALLOW:
         domains = check_curated(preset_id, kind, parse_curated(block), psl)
