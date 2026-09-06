@@ -1,4 +1,4 @@
-# Focus Home
+# Distraction Killer Launcher
 
 A deliberately boring Android home screen. It shows a clock, the date, battery,
 optionally the weather, and a plain text list of apps. Everything else about
@@ -62,20 +62,20 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 `-r` reinstalls over an existing copy and keeps your settings. For a genuinely
-clean slate, run `adb uninstall com.focushome.launcher` first.
+clean slate, run `adb uninstall com.distractionkiller.launcher` first.
 
 No cable handy? Copy the APK to the phone and open it from a file manager; you
 will have to allow install-from-unknown-sources for that app.
 
 ## Make it your home screen
 
-On Android 15: **Settings → Apps → Default apps → Home app → Focus Home**.
+On Android 15: **Settings → Apps → Default apps → Home app → Distraction Killer Launcher**.
 
 Some manufacturers move it. Samsung has it under **Settings → Apps → Choose
 default apps → Home app**. Cannot find the menu? Press the home button once. While more than one launcher
 is installed the system usually offers a picker.
 
-Going back to your old launcher is the same screen, in reverse. Focus Home never
+Going back to your old launcher is the same screen, in reverse. Distraction Killer Launcher never
 blocks that, by design.
 
 ## Building a release APK
@@ -85,8 +85,8 @@ refuse to install. For personal use the debug APK above is simpler. If you do
 want a signed release build, create a keystore:
 
 ```bash
-keytool -genkey -v -keystore focus-home.jks -keyalg RSA -keysize 2048 \
-        -validity 10000 -alias focus-home
+keytool -genkey -v -keystore distraction-killer.jks -keyalg RSA -keysize 2048 \
+        -validity 10000 -alias distraction-killer
 ```
 
 then add a `signingConfigs` block to `app/build.gradle.kts` pointing at it, with
@@ -96,7 +96,7 @@ does the same thing through a dialog.
 
 ## Forgotten password
 
-There is no recovery, on purpose. Locked out? **Settings → Apps → Focus Home →
+There is no recovery, on purpose. Locked out? **Settings → Apps → Distraction Killer Launcher →
 Storage → Clear storage** wipes the password hash and both app lists, and the
 next launch starts over from first-run setup. Your actual apps and data are
 untouched.

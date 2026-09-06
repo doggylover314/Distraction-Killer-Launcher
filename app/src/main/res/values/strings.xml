@@ -1,4 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Focus Home</string>
+    <string name="app_name">Distraction Killer Launcher</string>
+
+    <string name="enforcement_service_summary">Enforces the app list, blocks websites and guards Settings</string>
+    <string name="enforcement_service_description">Lets Distraction Killer Launcher send hidden apps back to the home screen, block listed websites in your browser, and keep the Android Settings pages that could switch or remove the launcher behind its password. It reads the name of the app on screen, the browser address bar, and the titles on Settings screens, and nothing else. It never stores, sends or logs what it sees.</string>
+
+    <string name="toast_app_blocked">Not on your home screen</string>
+    <string name="toast_site_blocked">Blocked: %1$s</string>
+    <string name="toast_settings_locked">Unlock in Distraction Killer Launcher settings first</string>
 </resources>

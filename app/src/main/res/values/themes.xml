@@ -3,7 +3,7 @@
     <!-- Compose draws all of the UI, so this theme only needs to give the
          window a sane background and no action bar. Using a platform parent
          keeps AppCompat / Material Components out of the dependency list. -->
-    <style name="Theme.FocusHome" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.DistractionKiller" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

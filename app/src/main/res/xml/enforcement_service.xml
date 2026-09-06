@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Accessibility service declaration. No package filter on purpose: the
+     service decides per event whether a window belongs to a browser, to
+     Settings, or to an app that should be sent home, and ignores the rest.
+     flagReportViewIds is what makes browser address bars findable by id. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/enforcement_service_description"
+    android:summary="@string/enforcement_service_summary"
+    android:notificationTimeout="150" />

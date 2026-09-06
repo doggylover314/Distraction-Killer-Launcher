@@ -25,6 +25,22 @@
         <intent>
             <action android:name="android.media.action.STILL_IMAGE_CAMERA" />
         </intent>
+        <!-- Browsers, for the website blocklist. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- Apps the system-wide enforcement must never send home. -->
+        <intent>
+            <action android:name="android.settings.SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.settings.ACCESSIBILITY_SETTINGS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
     </queries>
 
     <application
@@ -35,7 +51,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FocusHome"
+        android:theme="@style/Theme.DistractionKiller"
         android:enableOnBackInvokedCallback="false"
         tools:ignore="UnusedAttribute">
 
@@ -54,7 +70,7 @@
             android:stateNotNeeded="true"
             android:excludeFromRecents="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.FocusHome">
+            android:theme="@style/Theme.DistractionKiller">
 
             <!-- This filter is what makes the app selectable as a home screen. -->
             <intent-filter>
@@ -81,7 +97,24 @@
             android:noHistory="true"
             android:excludeFromRecents="true"
             android:windowSoftInputMode="adjustResize"
-            android:theme="@style/Theme.FocusHome" />
+            android:theme="@style/Theme.DistractionKiller" />
+
+        <!-- The enforcement service. exported=true is required for the system
+             to bind it; the BIND_ACCESSIBILITY_SERVICE permission means the
+             system is the only thing that can. Inert until switched on under
+             Settings > Accessibility. -->
+        <service
+            android:name=".blocker.EnforcementService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/enforcement_service" />
+        </service>
     </application>
 
 </manifest>

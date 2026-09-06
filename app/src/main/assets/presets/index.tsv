@@ -1,0 +1,10 @@
+id	kind	name	description	source	license
+distractions	block	Social & entertainment	Social networks, short-video apps, streaming, memes, dating and forum time-sinks.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+news	block	News sites	Mainstream news, tabloids, business and tech news, and news aggregators.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+shopping	block	Online shopping	Marketplaces, big retailers, fashion, resale and deal sites, including country variants.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+games	block	Gaming sites	Browser game portals, game stores and launchers, and gaming news sites.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+adult	block	Adult content	Adult and pornography sites, derived from the StevenBlack hosts porn extension.	https://raw.githubusercontent.com/StevenBlack/hosts/master/extensions/porn/sinfonietta/hosts	MIT (StevenBlack/hosts, Copyright Steven Black; extension data by Sinfonietta) - see THIRD_PARTY_NOTICES.md
+gambling	block	Gambling sites	Betting, casino and poker sites, derived from the StevenBlack hosts gambling extension.	https://raw.githubusercontent.com/StevenBlack/hosts/master/extensions/gambling/sinfonietta/hosts	MIT (StevenBlack/hosts, Copyright Steven Black; extension data by Sinfonietta) - see THIRD_PARTY_NOTICES.md
+essentials	allow	Essentials	Search, maps, reference, email, messaging, health and government; add your own bank.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+work	allow	Work tools	Office suites, chat, meetings, code hosting, project tracking and design tools.	Hand-curated for Distraction Killer Launcher	Public domain (this project)
+learning	allow	Learning	Courses, encyclopedias, coding references, language learning and digital libraries.	Hand-curated for Distraction Killer Launcher	Public domain (this project)

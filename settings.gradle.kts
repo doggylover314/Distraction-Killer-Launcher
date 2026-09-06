@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FocusHome"
+rootProject.name = "DistractionKillerLauncher"
 include(":app")

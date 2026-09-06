@@ -5,15 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.focushome.launcher"
+    namespace = "com.distractionkiller.launcher"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.focushome.launcher"
+        applicationId = "com.distractionkiller.launcher"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     buildTypes {

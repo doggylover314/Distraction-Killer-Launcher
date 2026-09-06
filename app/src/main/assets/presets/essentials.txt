@@ -1,0 +1,61 @@
+# Distraction Killer Launcher preset: Essentials (allow)
+# Source: Hand-curated for Distraction Killer Launcher
+# License: Public domain (this project)
+# Generated: 2026-09-06 by tools/build_presets.py
+# 55 domains
+
+1password.com
+accuweather.com
+apple.com
+bing.com
+bitwarden.com
+brave.com
+canada.ca
+cdc.gov
+citymapper.com
+deepl.com
+dictionary.com
+duckduckgo.com
+ecosia.org
+europa.eu
+fastmail.com
+gmail.com
+google.com
+gov.uk
+here.com
+icloud.com
+irs.gov
+lastpass.com
+live.com
+lyft.com
+mayoclinic.org
+medlineplus.gov
+merriam-webster.com
+messenger.com
+microsoft.com
+microsoftonline.com
+moovitapp.com
+nhs.uk
+openstreetmap.org
+outlook.com
+paypal.com
+proton.me
+protonmail.com
+signal.org
+ssa.gov
+startpage.com
+t.me
+telegram.org
+thesaurus.com
+timeanddate.com
+uber.com
+usa.gov
+waze.com
+weather.com
+weather.gov
+webmd.com
+whatsapp.com
+who.int
+wikimedia.org
+wikipedia.org
+wiktionary.org
