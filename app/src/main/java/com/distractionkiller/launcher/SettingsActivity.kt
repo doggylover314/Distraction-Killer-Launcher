@@ -21,6 +21,7 @@ import com.distractionkiller.launcher.ui.PasswordPromptScreen
 import com.distractionkiller.launcher.ui.ProtectedSettingsScreen
 import com.distractionkiller.launcher.ui.SetPasswordScreen
 import com.distractionkiller.launcher.ui.theme.DistractionKillerTheme
+import com.distractionkiller.launcher.ui.theme.windowThemeResId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -34,10 +35,11 @@ import kotlinx.coroutines.withContext
 class SettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val prefs = Prefs(this)
+        setTheme(prefs.themeMode.windowThemeResId())
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val prefs = Prefs(this)
         val appRepository = AppRepository(this)
 
         setContent {
@@ -51,6 +53,17 @@ class SettingsActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * noHistory finishes this activity when something covers it, but the
+     * framework deliberately skips that when the screen simply turns off.
+     * Finishing here makes "leaves the foreground, re-locks" hold in that
+     * case too. Rotation is exempt so it does not bounce you to the prompt.
+     */
+    override fun onStop() {
+        super.onStop()
+        if (!isChangingConfigurations) finish()
     }
 }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,16 +37,19 @@ import android.os.SystemClock
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.distractionkiller.launcher.blocker.AccessibilityStatus
 import com.distractionkiller.launcher.blocker.UrlMatcher
 import com.distractionkiller.launcher.blocker.WebsiteMode
+import com.distractionkiller.launcher.blocker.WebsitePreset
 import com.distractionkiller.launcher.blocker.WebsitePresets
 import com.distractionkiller.launcher.data.AppFilter
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.LauncherMode
 import com.distractionkiller.launcher.data.Prefs
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /** How long the Android Settings lock stands down after the password is used. */
@@ -83,18 +87,32 @@ fun ProtectedSettingsScreen(
     var customSites by remember(websiteMode) { mutableStateOf(prefs.websiteListFor(websiteMode)) }
     var enabledPresets by remember { mutableStateOf(prefs.enabledWebsitePresets) }
     val presets = remember { WebsitePresets(context) }
-    val catalog = remember { presets.catalog() }
+    var catalog by remember { mutableStateOf<List<WebsitePreset>>(emptyList()) }
     var presetCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
-    LaunchedEffect(catalog) {
-        presetCounts = withContext(Dispatchers.IO) {
-            catalog.associate { it.id to presets.countDomains(it.id) }
-        }
+    LaunchedEffect(Unit) {
+        // Asset reads, off the main thread: the catalog first so the rows
+        // appear, then the counts (the adult list is ~42,000 lines).
+        val list = withContext(Dispatchers.IO) { presets.catalog() }
+        catalog = list
+        presetCounts = withContext(Dispatchers.IO) { list.associate { it.id to presets.countDomains(it.id) } }
     }
+
     var enforceApps by remember { mutableStateOf(prefs.enforceAppsSystemWide) }
     var lockSettings by remember { mutableStateOf(prefs.lockSystemSettings) }
     var keywords by remember { mutableStateOf(prefs.settingsLockKeywords) }
     var unlockedUntil by remember { mutableLongStateOf(prefs.settingsUnlockUntilElapsed) }
     var unlockGrantedAt by remember { mutableLongStateOf(prefs.settingsUnlockGrantedAtElapsed) }
+
+    // Ticks while a window is open so the "about N min" line counts down
+    // and disappears when the lock re-engages, instead of freezing.
+    var nowElapsed by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(unlockedUntil) {
+        while (true) {
+            nowElapsed = SystemClock.elapsedRealtime()
+            if (nowElapsed >= unlockedUntil) break
+            delay(15_000L)
+        }
+    }
     val serviceOn = remember { AccessibilityStatus.isServiceEnabled(context) }
 
     var showPasswordDialog by remember { mutableStateOf(false) }
@@ -169,16 +187,22 @@ fun ProtectedSettingsScreen(
                         )
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(top = 8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         ) {
-                            OutlinedButton(onClick = {
-                                grantUnlockWindow()
-                                AccessibilityStatus.openAppInfo(context)
-                            }) { Text("App info") }
-                            Button(onClick = {
-                                grantUnlockWindow()
-                                AccessibilityStatus.openAccessibilitySettings(context)
-                            }) { Text("Accessibility settings") }
+                            OutlinedButton(
+                                onClick = {
+                                    grantUnlockWindow()
+                                    AccessibilityStatus.openAppInfo(context)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("App info", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            Button(
+                                onClick = {
+                                    grantUnlockWindow()
+                                    AccessibilityStatus.openAccessibilitySettings(context)
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Accessibility", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                     }
                 }
@@ -205,19 +229,24 @@ fun ProtectedSettingsScreen(
             }
             item {
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                    val now = SystemClock.elapsedRealtime()
-                    if (unlockGrantedAt <= now && now < unlockedUntil) {
-                        val minutesLeft = ((unlockedUntil - now) / 60_000L) + 1
+                    if (unlockGrantedAt <= nowElapsed && nowElapsed < unlockedUntil) {
+                        val minutesLeft = ((unlockedUntil - nowElapsed) / 60_000L) + 1
                         InfoText("Android Settings changes allowed for about $minutesLeft min.", highlighted = true)
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = ::grantUnlockWindow) {
-                            Text("Allow changes for $SETTINGS_UNLOCK_MINUTES min")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = ::grantUnlockWindow, modifier = Modifier.weight(1f)) {
+                            Text("Allow $SETTINGS_UNLOCK_MINUTES min", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        OutlinedButton(onClick = {
-                            grantUnlockWindow()
-                            AccessibilityStatus.openHomeAppSettings(context)
-                        }) { Text("Switch home app") }
+                        OutlinedButton(
+                            onClick = {
+                                grantUnlockWindow()
+                                AccessibilityStatus.openHomeAppSettings(context)
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Switch home app", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
                 }
             }
@@ -522,10 +551,20 @@ private fun ListChoice(
     onSelect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val text = "$label ($count)" + if (active) " · in use" else ""
+    val content: @Composable () -> Unit = {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("$label ($count)", maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text = if (active) "in use" else " ",
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+        }
+    }
+    val padding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
     if (selected) {
-        Button(onClick = onSelect, modifier = modifier) { Text(text, maxLines = 1) }
+        Button(onClick = onSelect, modifier = modifier, contentPadding = padding) { content() }
     } else {
-        OutlinedButton(onClick = onSelect, modifier = modifier) { Text(text, maxLines = 1) }
+        OutlinedButton(onClick = onSelect, modifier = modifier, contentPadding = padding) { content() }
     }
 }

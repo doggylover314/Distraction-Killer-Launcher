@@ -30,6 +30,7 @@ import com.distractionkiller.launcher.ui.HomeScreen
 import com.distractionkiller.launcher.ui.HomeUiConfig
 import com.distractionkiller.launcher.ui.SetPasswordScreen
 import com.distractionkiller.launcher.ui.theme.DistractionKillerTheme
+import com.distractionkiller.launcher.ui.theme.windowThemeResId
 import com.distractionkiller.launcher.weather.WeatherRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,10 +54,11 @@ class HomeActivity : ComponentActivity() {
     private val resumeCounter = mutableIntStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        prefs = Prefs(this)
+        setTheme(prefs.themeMode.windowThemeResId())
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        prefs = Prefs(this)
         appRepository = AppRepository(this)
 
         setContent {
@@ -67,9 +69,10 @@ class HomeActivity : ComponentActivity() {
                 var hasPassword by remember(refreshKey) { mutableStateOf(prefs.isPasswordSet) }
 
                 // Back does nothing on the home screen, the same as a stock
-                // launcher. Also stops the first-run password screen from being
-                // dismissed with a swipe.
-                BackHandler(enabled = true) { /* intentionally empty */ }
+                // launcher. Left off during first-run setup: nothing is enforced
+                // yet, and if this was opened from another launcher's drawer the
+                // user should be able to leave.
+                BackHandler(enabled = hasPassword) { /* intentionally empty */ }
 
                 if (!hasPassword) {
                     SetPasswordScreen(
@@ -118,14 +121,17 @@ private fun HomeRoute(
     // Re-read on every resume so changes made in Settings show up immediately.
     val mode = remember(refreshKey) { prefs.mode }
     val config = remember(refreshKey) { HomeUiConfig.from(prefs) }
-    val today = remember(refreshKey) { LocalDate.now().toString() }
 
     var hasLocationPermission by remember(refreshKey) {
         mutableStateOf(weatherRepository.hasLocationPermission())
     }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> hasLocationPermission = granted }
+    ) { granted ->
+        // The dialog is gone; the Settings lock can resume at once.
+        EnforcementService.suppressSettingsLockUntilElapsed = 0L
+        hasLocationPermission = granted
+    }
 
     LaunchedEffect(refreshKey) {
         isLoading = true
@@ -182,7 +188,7 @@ private fun HomeRoute(
         weather = weather,
         config = config,
         launchCounts = if (config.showLaunchCounts) {
-            launchCounter.counts.takeIf { launchCounter.dateKey == today } ?: emptyMap()
+            launchCounter.counts.takeIf { launchCounter.dateKey == LocalDate.now().toString() } ?: emptyMap()
         } else {
             emptyMap()
         },
@@ -194,7 +200,9 @@ private fun HomeRoute(
             }
             try {
                 context.startActivity(intent)
-                launchCounter = launchCounter.recorded(app.packageName, today)
+                // Date taken now, not at resume: a screen left on past
+                // midnight would otherwise credit taps to yesterday.
+                launchCounter = launchCounter.recorded(app.packageName, LocalDate.now().toString())
                 prefs.launchCounter = launchCounter
             } catch (e: ActivityNotFoundException) {
                 // Uninstalled between the list being built and the tap.

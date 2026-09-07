@@ -32,6 +32,8 @@ object PresetParser {
                     license = cols[5].trim(),
                 )
             }
+            // A repeated id would collide as a LazyColumn key and crash Settings.
+            .distinctBy { it.id }
             .toList()
 
     /** One domain per line; '#' comments and blank lines are skipped. */

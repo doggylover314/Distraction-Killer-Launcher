@@ -19,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -155,7 +156,9 @@ fun StringSetEditor(
     onRemove: (String) -> Unit,
     keyboardType: KeyboardType = KeyboardType.Uri,
 ) {
-    var input by remember { mutableStateOf("") }
+    // Saveable: the editor sits in a LazyColumn and is disposed when scrolled
+    // out of view, which would otherwise drop a half-typed entry.
+    var input by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
     fun submit() {

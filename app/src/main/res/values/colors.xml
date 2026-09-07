@@ -3,5 +3,7 @@
     <!-- Matches the Compose surface colour so there is no flash of the wrong
          shade while the activity window is being created. -->
     <color name="window_background">#FFFDFCFF</color>
+    <color name="window_background_light">#FFFDFCFF</color>
+    <color name="window_background_dark">#FF121316</color>
     <color name="ic_launcher_background">#FF1B1B1F</color>
 </resources>

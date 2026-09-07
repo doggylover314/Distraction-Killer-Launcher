@@ -372,8 +372,13 @@ class EnforcementService : AccessibilityService() {
         if (!prefs.lockSystemSettings) return false
         val nowElapsed = SystemClock.elapsedRealtime()
         // Our own permission prompt is drawn by PermissionController and
-        // names this app; HomeActivity announces it before asking.
-        if (nowElapsed < suppressSettingsLockUntilElapsed) return false
+        // names this app; HomeActivity announces it before asking. The grace
+        // covers only the dialog packages, never the Settings app itself.
+        if (nowElapsed < suppressSettingsLockUntilElapsed &&
+            packageName in SettingsLockDetector.ROLE_DIALOG_PACKAGES
+        ) {
+            return false
+        }
         if (prefs.isSettingsUnlocked(nowElapsed)) return false
 
         val texts = ArrayList<CharSequence?>()
