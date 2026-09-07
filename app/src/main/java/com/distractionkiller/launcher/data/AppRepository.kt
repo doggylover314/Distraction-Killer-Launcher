@@ -99,12 +99,24 @@ class AppRepository(context: Context) {
      * being the only one returned.
      */
     fun browserPackages(): Set<String> {
-        val intent = Intent(Intent.ACTION_VIEW, "https://example.com/".toUri())
-            .addCategory(Intent.CATEGORY_BROWSABLE)
-        val fromSystem = queryActivities(intent, PackageManager.MATCH_ALL.toLong())
-            .mapTo(LinkedHashSet()) { it.activityInfo.packageName }
+        val fromSystem = LinkedHashSet<String>()
+        for (url in listOf("https://example.com/", "http://example.com/")) {
+            val intent = Intent(Intent.ACTION_VIEW, url.toUri()).addCategory(Intent.CATEGORY_BROWSABLE)
+            queryActivities(intent, PackageManager.MATCH_ALL.toLong())
+                .mapTo(fromSystem) { it.activityInfo.packageName }
+        }
         return fromSystem + KNOWN_BROWSERS
     }
+
+    /**
+     * Whoever is the default home app right now, or null when the system has
+     * no default (it then shows its own chooser). Compared against our own
+     * package by the enforcement service: if another launcher has taken over,
+     * sending apps "home" would land on it, and it must not be sent home in
+     * turn.
+     */
+    fun defaultHomePackage(): String? =
+        resolvePackage(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
 
     /**
      * Packages the system-wide app enforcement must never send home. On top of
@@ -119,8 +131,15 @@ class AppRepository(context: Context) {
             Intent(Settings.ACTION_SETTINGS),
             Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
             Intent(Intent.ACTION_DIAL),
-            Intent(AlarmClock.ACTION_SHOW_ALARMS),
         ).forEach { intent -> resolvePackage(intent)?.let(packages::add) }
+
+        // Every clock app, not just the default: a ringing alarm's full-screen
+        // activity must never be sent home, and with two clock apps installed
+        // resolveActivity() would return the chooser and nothing would be
+        // exempt.
+        listOf(Intent(AlarmClock.ACTION_SHOW_ALARMS), Intent(AlarmClock.ACTION_SET_ALARM)).forEach { intent ->
+            queryActivities(intent).mapTo(packages) { it.activityInfo.packageName }
+        }
 
         runCatching {
             appContext.getSystemService(TelecomManager::class.java)?.defaultDialerPackage
@@ -187,6 +206,15 @@ class AppRepository(context: Context) {
             "com.vivaldi.browser",
             "com.kiwibrowser.browser",
             "org.chromium.chrome",
+            "org.torproject.torbrowser",
+            "com.yandex.browser",
+            "com.UCMobile.intl",
+            "com.mi.globalbrowser",
+            "com.opera.gx",
+            "com.opera.browser.beta",
+            "com.microsoft.emmx.beta",
+            "org.mozilla.fennec_fdroid",
+            "com.stoutner.privacybrowser.standard",
         )
     }
 }

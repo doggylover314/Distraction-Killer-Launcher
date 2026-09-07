@@ -1,0 +1,28 @@
+# Proxies, translators, caches and mirrors
+# Hand-curated for Distraction Killer Launcher. Public domain (this project).
+# On by default in blocklist mode: any of these can serve a blocked site's
+# pages under its own host name, which address-bar matching cannot see through.
+12ft.io
+archive.is
+archive.ph
+archive.today
+cachedview.nl
+croxyproxy.com
+croxyproxy.rocks
+farside.link
+hide.me
+hidemyass-freeproxy.com
+invidious.io
+kproxy.com
+libreddit.de
+nitter.net
+piped.video
+proxysite.com
+redlib.catsarch.com
+teddit.net
+translate.goog
+translate.google.com
+translate.yandex.com
+web.archive.org
+webcache.googleusercontent.com
+yewtu.be

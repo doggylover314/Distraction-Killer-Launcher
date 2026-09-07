@@ -15,7 +15,7 @@ class UrlMatcherTest {
         assertEquals("reddit.com", UrlMatcher.hostOf("reddit.com"))
         assertEquals("reddit.com", UrlMatcher.hostOf("  reddit.com  "))
         assertEquals("reddit.com", UrlMatcher.hostOf("http://reddit.com:8080/x?y=1#z"))
-        assertEquals("reddit.com", UrlMatcher.hostOf("user:pw@reddit.com/"))
+        assertEquals("reddit.com", UrlMatcher.hostOf("https://user:pw@reddit.com/"))
         assertEquals("reddit.com", UrlMatcher.hostOf("REDDIT.COM"))
         assertEquals("reddit.com", UrlMatcher.hostOf("reddit.com."))
         assertEquals("localhost", UrlMatcher.hostOf("localhost:3000/app"))
@@ -32,6 +32,26 @@ class UrlMatcherTest {
         assertNull(UrlMatcher.hostOf("ftp://reddit.com"))
         assertNull(UrlMatcher.hostOf("chrome://flags"))
         assertNull(UrlMatcher.hostOf("about:blank"))
+        // An e-mail address on screen is not a navigation.
+        assertNull(UrlMatcher.hostOf("someone@reddit.com"))
+    }
+
+    @Test
+    fun `internationalised hosts compare in ascii`() {
+        assertEquals("xn--bcher-kva.example", UrlMatcher.hostOf("https://bücher.example/"))
+        assertEquals("xn--bcher-kva.example", UrlMatcher.hostOf("BÜCHER.example"))
+        assertEquals("xn--bcher-kva.example", UrlMatcher.normalizePattern("www.bücher.example"))
+    }
+
+    @Test
+    fun `browser internal states`() {
+        assertTrue(UrlMatcher.isBrowserInternal(null))
+        assertTrue(UrlMatcher.isBrowserInternal("   "))
+        assertTrue(UrlMatcher.isBrowserInternal("about:blank"))
+        assertTrue(UrlMatcher.isBrowserInternal("chrome://newtab/"))
+        assertFalse(UrlMatcher.isBrowserInternal("chrome://flags"))
+        assertFalse(UrlMatcher.isBrowserInternal("data:text/html,<h1>hi</h1>"))
+        assertFalse(UrlMatcher.isBrowserInternal("view-source:https://reddit.com"))
     }
 
     @Test

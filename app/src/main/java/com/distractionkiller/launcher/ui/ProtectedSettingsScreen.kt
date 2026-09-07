@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import android.os.SystemClock
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -46,9 +47,6 @@ import com.distractionkiller.launcher.data.LauncherMode
 import com.distractionkiller.launcher.data.Prefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /** How long the Android Settings lock stands down after the password is used. */
 const val SETTINGS_UNLOCK_MINUTES = 10L
@@ -95,7 +93,8 @@ fun ProtectedSettingsScreen(
     var enforceApps by remember { mutableStateOf(prefs.enforceAppsSystemWide) }
     var lockSettings by remember { mutableStateOf(prefs.lockSystemSettings) }
     var keywords by remember { mutableStateOf(prefs.settingsLockKeywords) }
-    var unlockedUntil by remember { mutableLongStateOf(prefs.systemSettingsUnlockedUntil) }
+    var unlockedUntil by remember { mutableLongStateOf(prefs.settingsUnlockUntilElapsed) }
+    var unlockGrantedAt by remember { mutableLongStateOf(prefs.settingsUnlockGrantedAtElapsed) }
     val serviceOn = remember { AccessibilityStatus.isServiceEnabled(context) }
 
     var showPasswordDialog by remember { mutableStateOf(false) }
@@ -108,8 +107,10 @@ fun ProtectedSettingsScreen(
     val visibleApps = remember(apps, query) { AppFilter.search(apps, query) }
 
     fun grantUnlockWindow() {
-        unlockedUntil = System.currentTimeMillis() + SETTINGS_UNLOCK_MINUTES * 60_000L
-        prefs.systemSettingsUnlockedUntil = unlockedUntil
+        val now = SystemClock.elapsedRealtime()
+        prefs.grantSettingsUnlock(now, SETTINGS_UNLOCK_MINUTES * 60_000L)
+        unlockGrantedAt = now
+        unlockedUntil = now + SETTINGS_UNLOCK_MINUTES * 60_000L
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -204,11 +205,10 @@ fun ProtectedSettingsScreen(
             }
             item {
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                    val now = System.currentTimeMillis()
-                    if (unlockedUntil > now) {
-                        val until = DateTimeFormatter.ofPattern("HH:mm")
-                            .format(Instant.ofEpochMilli(unlockedUntil).atZone(ZoneId.systemDefault()))
-                        InfoText("Android Settings changes allowed until $until.", highlighted = true)
+                    val now = SystemClock.elapsedRealtime()
+                    if (unlockGrantedAt <= now && now < unlockedUntil) {
+                        val minutesLeft = ((unlockedUntil - now) / 60_000L) + 1
+                        InfoText("Android Settings changes allowed for about $minutesLeft min.", highlighted = true)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = ::grantUnlockWindow) {

@@ -20,6 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import android.os.SystemClock
+import com.distractionkiller.launcher.blocker.EnforcementService
 import com.distractionkiller.launcher.data.AppFilter
 import com.distractionkiller.launcher.data.AppRepository
 import com.distractionkiller.launcher.data.LaunchableApp
@@ -161,6 +163,10 @@ private fun HomeRoute(
     LaunchedEffect(config.weatherEnabled, hasLocationPermission) {
         if (config.weatherEnabled && !hasLocationPermission && !prefs.hasRequestedLocationPermission) {
             prefs.hasRequestedLocationPermission = true
+            // The permission dialog is drawn by PermissionController and names
+            // this app, which is exactly what the Settings lock watches for.
+            // Tell the service (same process) to stand down for a minute.
+            EnforcementService.suppressSettingsLockUntilElapsed = SystemClock.elapsedRealtime() + 60_000L
             permissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
     }

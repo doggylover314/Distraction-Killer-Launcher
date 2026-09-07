@@ -84,9 +84,13 @@ class Prefs(context: Context) {
         }
     }
 
-    /** Ids of the bundled presets that are switched on (both kinds share one set). */
+    /**
+     * Ids of the bundled presets that are switched on (both kinds share one
+     * set). The proxies preset starts on: without it, "reddit.com" is one
+     * Google Translate link away from being readable.
+     */
     var enabledWebsitePresets: Set<String>
-        get() = readSet(KEY_WEBSITE_PRESETS)
+        get() = prefs.getStringSet(KEY_WEBSITE_PRESETS, null)?.toSet() ?: DEFAULT_PRESETS
         set(value) = writeSet(KEY_WEBSITE_PRESETS, value)
 
     var siteBlockingEnabled: Boolean
@@ -108,10 +112,28 @@ class Prefs(context: Context) {
             ?: SettingsLockDetector.DEFAULT_KEYWORDS
         set(value) = writeSet(KEY_LOCK_KEYWORDS, value)
 
-    /** Wall-clock millis until which the locked Settings screens may be used. */
-    var systemSettingsUnlockedUntil: Long
+    /**
+     * Window during which the locked Settings screens may be used, as a pair of
+     * SystemClock.elapsedRealtime() values. Elapsed time rather than wall-clock
+     * so changing the date cannot stretch it; see SettingsLockDetector.isUnlocked.
+     */
+    var settingsUnlockGrantedAtElapsed: Long
+        get() = prefs.getLong(KEY_SETTINGS_UNLOCK_GRANTED, 0L)
+        set(value) = prefs.edit { putLong(KEY_SETTINGS_UNLOCK_GRANTED, value) }
+
+    var settingsUnlockUntilElapsed: Long
         get() = prefs.getLong(KEY_SETTINGS_UNLOCKED_UNTIL, 0L)
         set(value) = prefs.edit { putLong(KEY_SETTINGS_UNLOCKED_UNTIL, value) }
+
+    fun grantSettingsUnlock(nowElapsed: Long, durationMillis: Long) {
+        prefs.edit {
+            putLong(KEY_SETTINGS_UNLOCK_GRANTED, nowElapsed)
+            putLong(KEY_SETTINGS_UNLOCKED_UNTIL, nowElapsed + durationMillis)
+        }
+    }
+
+    fun isSettingsUnlocked(nowElapsed: Long): Boolean =
+        SettingsLockDetector.isUnlocked(settingsUnlockGrantedAtElapsed, settingsUnlockUntilElapsed, nowElapsed)
 
     // ------------------------------------------------------------- password
 
@@ -272,6 +294,7 @@ class Prefs(context: Context) {
 
     companion object {
         const val DEFAULT_NOTE = "Do the thing you opened the phone for."
+        val DEFAULT_PRESETS: Set<String> = setOf("proxies")
 
         /** Keys that change which websites are listed; the service reloads presets on these. */
         val WEBSITE_KEYS: Set<String>
@@ -283,7 +306,7 @@ class Prefs(context: Context) {
                 KEY_MODE, KEY_ALLOWLIST, KEY_BLOCKLIST,
                 KEY_WEBSITE_MODE, KEY_WEBSITE_BLOCKLIST, KEY_WEBSITE_ALLOWLIST, KEY_WEBSITE_PRESETS,
                 KEY_SITE_BLOCKING, KEY_ENFORCE_APPS, KEY_LOCK_SETTINGS,
-                KEY_LOCK_KEYWORDS, KEY_SETTINGS_UNLOCKED_UNTIL,
+                KEY_LOCK_KEYWORDS, KEY_SETTINGS_UNLOCKED_UNTIL, KEY_SETTINGS_UNLOCK_GRANTED,
             )
 
         private const val FILE_NAME = "distraction_killer_prefs"
@@ -299,7 +322,8 @@ class Prefs(context: Context) {
         private const val KEY_ENFORCE_APPS = "enforce_apps_system_wide"
         private const val KEY_LOCK_SETTINGS = "lock_system_settings"
         private const val KEY_LOCK_KEYWORDS = "settings_lock_keywords"
-        private const val KEY_SETTINGS_UNLOCKED_UNTIL = "settings_unlocked_until"
+        private const val KEY_SETTINGS_UNLOCKED_UNTIL = "settings_unlocked_until_elapsed"
+        private const val KEY_SETTINGS_UNLOCK_GRANTED = "settings_unlock_granted_elapsed"
         private const val KEY_PASSWORD_HASH = "password_hash"
         private const val KEY_PASSWORD_SALT = "password_salt"
         private const val KEY_THEME = "theme_mode"

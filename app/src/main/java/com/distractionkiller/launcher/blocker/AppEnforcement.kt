@@ -48,5 +48,11 @@ object AppEnforcement {
         "com.android.documentsui",
         "com.android.intentresolver",
         "com.google.android.gms",
+        // Emergency SOS, car-crash detection, and the stock clock apps: a
+        // countdown or a ringing alarm must never be bounced.
+        "com.google.android.apps.safetyhub",
+        "com.google.android.deskclock",
+        "com.android.deskclock",
+        "com.sec.android.app.clockpackage",
     )
 }

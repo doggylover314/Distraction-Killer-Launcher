@@ -59,9 +59,37 @@ class SettingsLockDetectorTest {
     }
 
     @Test
-    fun `unlock window`() {
-        assertTrue(SettingsLockDetector.isUnlocked(unlockedUntilMillis = 2_000, nowMillis = 1_000))
-        assertFalse(SettingsLockDetector.isUnlocked(unlockedUntilMillis = 1_000, nowMillis = 1_000))
-        assertFalse(SettingsLockDetector.isUnlocked(unlockedUntilMillis = 0, nowMillis = 1_000))
+    fun `unlock window is a forward-only interval in elapsed time`() {
+        assertTrue(SettingsLockDetector.isUnlocked(grantedAtElapsed = 1_000, untilElapsed = 2_000, nowElapsed = 1_500))
+        assertFalse(SettingsLockDetector.isUnlocked(grantedAtElapsed = 1_000, untilElapsed = 2_000, nowElapsed = 2_000))
+        assertFalse(SettingsLockDetector.isUnlocked(grantedAtElapsed = 0, untilElapsed = 0, nowElapsed = 1_000))
+        // A reboot restarts elapsed time near zero: "now" before the grant means the window is over.
+        assertFalse(SettingsLockDetector.isUnlocked(grantedAtElapsed = 900_000, untilElapsed = 1_500_000, nowElapsed = 5_000))
+    }
+
+    @Test
+    fun `the role manager pickers and installers are lockable`() {
+        assertTrue(locked("com.google.android.permissioncontroller", "Default apps", "Home app"))
+        assertTrue(locked("com.google.android.permissioncontroller", "App info", label))
+        assertTrue(locked("com.google.android.packageinstaller", "Do you want to uninstall this app?", label))
+        assertTrue(locked("com.android.intentresolver", "Select a Home app"))
+        assertFalse(locked("com.google.android.packageinstaller", "Do you want to install this application?", "Other App"))
+    }
+
+    @Test
+    fun `a launcher asking for the home role is caught by phrase`() {
+        val texts = listOf("Set Nova Launcher as your default home app?", "Cancel", "Set as default")
+        assertTrue(SettingsLockDetector.isHomeRoleDialog("com.google.android.permissioncontroller", texts))
+        assertTrue(SettingsLockDetector.isHomeRoleDialog("android", listOf("Use Lawnchair as Home app")))
+        assertFalse(SettingsLockDetector.isHomeRoleDialog("com.google.android.permissioncontroller",
+            listOf("Allow Maps to access this device's location?")))
+        assertFalse(SettingsLockDetector.isHomeRoleDialog("com.android.chrome", texts))
+    }
+
+    @Test
+    fun `the guest user gateway is locked`() {
+        assertTrue(locked("com.android.settings", "Multiple users"))
+        assertTrue(locked("com.android.settings", "System", "Users"))
+        assertFalse(locked("com.android.settings", "Users & accounts settings for work"))
     }
 }

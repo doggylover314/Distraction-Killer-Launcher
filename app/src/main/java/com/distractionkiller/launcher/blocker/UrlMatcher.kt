@@ -1,5 +1,6 @@
 package com.distractionkiller.launcher.blocker
 
+import java.net.IDN
 import java.util.Locale
 
 /**
@@ -24,6 +25,10 @@ object UrlMatcher {
         if (text.isEmpty() || text.any { it.isWhitespace() }) return null
 
         val schemeEnd = text.indexOf("://")
+        // Without a scheme, "name@host" is far more likely an e-mail address
+        // shown somewhere in an app than a URL with credentials. Treating it
+        // as a host would let a contact card trigger a block.
+        if (schemeEnd < 0 && '@' in text) return null
         if (schemeEnd >= 0) {
             val scheme = text.substring(0, schemeEnd).lowercase(Locale.ROOT)
             if (scheme != "http" && scheme != "https") return null
@@ -41,8 +46,34 @@ object UrlMatcher {
         // is a search, not a navigation.
         if (!host.contains('.') && host != "localhost" && !host.startsWith("[")) return null
         if (host.any { !(it.isLetterOrDigit() || it == '.' || it == '-' || it == '[' || it == ']' || it == ':') }) return null
+        // Browsers show internationalised names in Unicode; lists hold the
+        // ASCII (xn--) form. Compare in ASCII so the two agree.
+        if (host.any { it.code > 127 }) {
+            host = runCatching { IDN.toASCII(host).lowercase(Locale.ROOT) }.getOrNull() ?: return null
+        }
         return host
     }
+
+    /**
+     * Address-bar states that are the browser's own, not a page: empty, the
+     * new-tab page, about:blank. Allowlist mode lets these through and blocks
+     * every other non-host text (data:, file:, view-source:, chrome://).
+     */
+    fun isBrowserInternal(addressBarText: CharSequence?): Boolean {
+        val text = addressBarText?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        if (text.isEmpty()) return true
+        return INTERNAL_PREFIXES.any { text.startsWith(it) }
+    }
+
+    private val INTERNAL_PREFIXES = listOf(
+        "about:blank",
+        "about:newtab",
+        "chrome://newtab",
+        "chrome-native://newtab",
+        "chrome://new-tab-page",
+        "brave://newtab",
+        "edge://newtab",
+    )
 
     /** Canonical form of a user-entered pattern, or null if it is unusable. */
     fun normalizePattern(input: String): String? {

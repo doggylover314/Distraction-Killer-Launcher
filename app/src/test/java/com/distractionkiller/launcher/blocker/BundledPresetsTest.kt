@@ -24,7 +24,7 @@ class BundledPresetsTest {
         assertEquals("duplicate ids", catalog.size, catalog.map { it.id }.toSet().size)
 
         val expectedIds = setOf(
-            "distractions", "news", "shopping", "games", "adult", "gambling",
+            "distractions", "news", "shopping", "games", "adult", "gambling", "proxies",
             "essentials", "work", "learning",
         )
         assertEquals(expectedIds, catalog.map { it.id }.toSet())
@@ -61,6 +61,17 @@ class BundledPresetsTest {
         listOf("wikipedia.org", "google.com", "github.com").forEach {
             assertFalse("$it should not match", SiteRules.matchesAny(it, domains))
         }
+    }
+
+    @Test
+    fun `the proxies preset covers translate and archive front ends and nothing that is allowed`() {
+        val proxies = File(dir, "proxies.txt").bufferedReader().useLines(PresetParser::parseDomains)
+        listOf("reddit-com.translate.goog", "translate.google.com", "web.archive.org", "12ft.io").forEach {
+            assertTrue("$it should match", SiteRules.matchesAny(it, proxies))
+        }
+        val allowed = listOf("essentials", "work", "learning")
+            .flatMap { File(dir, "$it.txt").bufferedReader().useLines(PresetParser::parseDomains) }
+        allowed.forEach { assertFalse("$it is both allowed and a proxy", SiteRules.matchesAny(it, proxies)) }
     }
 
     @Test

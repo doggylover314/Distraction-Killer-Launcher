@@ -2,12 +2,12 @@
 # Source: Hand-curated for Distraction Killer Launcher
 # License: Public domain (this project)
 # Generated: 2026-09-06 by tools/build_presets.py
+# Note: archive.org is deliberately left out; the Wayback Machine can serve any blocked site.
 # 71 domains
 
 academia.edu
 android.com
 ankiweb.net
-archive.org
 arxiv.org
 babbel.com
 brilliant.org
