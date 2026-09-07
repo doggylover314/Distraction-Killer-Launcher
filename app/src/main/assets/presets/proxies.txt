@@ -1,7 +1,9 @@
-# Proxies, translators, caches and mirrors
-# Hand-curated for Distraction Killer Launcher. Public domain (this project).
-# On by default in blocklist mode: any of these can serve a blocked site's
-# pages under its own host name, which address-bar matching cannot see through.
+# Distraction Killer Launcher preset: Proxies & mirrors (block)
+# Source: Hand-curated for Distraction Killer Launcher
+# License: Public domain (this project)
+# Generated: 2026-09-07 by tools/build_presets.py
+# 24 domains
+
 12ft.io
 archive.is
 archive.ph

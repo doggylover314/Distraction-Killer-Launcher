@@ -1,9 +1,8 @@
 # Distraction Killer Launcher preset: Learning (allow)
 # Source: Hand-curated for Distraction Killer Launcher
 # License: Public domain (this project)
-# Generated: 2026-09-06 by tools/build_presets.py
-# Note: archive.org is deliberately left out; the Wayback Machine can serve any blocked site.
-# 71 domains
+# Generated: 2026-09-07 by tools/build_presets.py
+# 70 domains
 
 academia.edu
 android.com

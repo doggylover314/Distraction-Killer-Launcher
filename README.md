@@ -3,8 +3,9 @@
 A deliberately boring Android home screen. It shows a clock, the date, battery,
 optionally the weather, and a plain text list of apps. Version 1.0 hid apps and
 blocked nothing. Version 1.1 adds an optional accessibility service that sends
-hidden apps back to the home screen, filters websites in the browser, and keeps
-the Android Settings pages that could undo all of this behind the password.
+hidden apps back to the home screen, filters websites wherever one is on
+screen, and keeps the Android screens that could undo all of this behind the
+password.
 
 Two modes for the app list, switchable from inside the app:
 
@@ -48,10 +49,11 @@ To check nothing is broken first:
 ./gradlew test lint
 ```
 
-Behind that sit 69 JVM unit tests: password hashing, the allowlist and
+Behind that sit 80 JVM unit tests: password hashing, the allowlist and
 blocklist rules, the search box, the launch counter, weather parsing, the URL
-matcher, the site rules, the app-enforcement rule and the Settings-screen
-detector. Android Lint runs across the module.
+matcher, the site rules, the app-enforcement rule, the Settings-screen detector
+and its unlock window, plus a pass over the bundled preset files themselves.
+Android Lint runs across the module.
 
 ### The ready-made APK
 
@@ -133,10 +135,12 @@ While more than one launcher is installed the system usually offers a picker.
 
 Going back is no longer the same screen in reverse. Once the accessibility
 service is on and **Lock Android Settings** is ticked, the Home app screen is
-one of the pages the launcher backs out of. Instead: **Settings** on the home
-screen → **Protected settings** → password → **Switch home app**, which opens
-a 10-minute window and jumps straight to the Home app picker. That is the
-whole mechanism behind "changing the launcher back requires the password".
+one of the pages the launcher sends you home from, and so is the "Set X as
+your default home app?" dialog another launcher can raise on its own. Instead:
+**Settings** on the home screen → **Protected settings** → password → **Switch
+home app**, which opens a 10-minute window and jumps straight to the Home app
+picker. That is the whole mechanism behind "changing the launcher back requires
+the password".
 
 ## First-run setup
 
@@ -199,27 +203,71 @@ Any app not shown on the home screen that reaches the foreground by some other
 route (a notification, the share sheet, search, **Android Settings → Open**) is
 sent back to the home screen with a toast. Only apps with a launcher icon are
 candidates, so a file picker, a permission dialog or a share sheet belonging to
-an allowed app is never touched. On top of that a fixed set is always exempt:
-Android Settings, the dialler and in-call screen, the alarm clock app, every
-enabled keyboard, system UI, the permission dialogs and the package installer.
-For the exact lists see `AppEnforcement.FIXED_EXEMPTIONS` and
-`AppRepository.systemExemptPackages`.
+an allowed app is never touched. Only real application windows are acted on,
+too. A keyboard popping up is not an app arriving (Gboard has a launcher icon,
+and a Home press for every text field would make the phone unusable), and a
+picture-in-picture window is skipped because an accessibility service cannot
+close one. That last point is a real gap: a hidden app's PiP video, once
+playing, keeps playing.
+
+After the Home press the service looks at the foreground again once its
+600 ms action throttle has passed. Without that second look, a splash screen
+that hands over to its real activity a few hundred milliseconds later would
+slip through and stay.
+
+On top of the list rules a fixed set is always exempt: Android Settings, the
+dialler and in-call screen, every clock app (everything that handles the alarm
+intents, so a ringing alarm is never bounced, plus the stock clock packages
+by name: Google, AOSP, Samsung), Pixel's Personal Safety app, every enabled
+keyboard, system UI, the permission dialogs and the package installer. If
+another launcher has become the default home app it is exempt as well, because
+"home" then means that launcher and sending it home would loop forever; the
+service logs a warning when it notices. For the exact lists see
+`AppEnforcement.FIXED_EXEMPTIONS` and `AppRepository.systemExemptPackages`.
 
 ### Lock Android Settings
 
-Two kinds of Settings screen count as locked: one where some visible text
-exactly matches an entry in a keyword list (in practice the title), and one
-that mentions the app by name anywhere, such as its App info page or the
-accessibility toggle. By default the keywords are "Home app", "Default home
-app", "Default apps", "Choose default apps", "Launcher", "Select a Home app"
-and "Select Home app". A locked screen gets a Back press and a toast. If another
-locked screen turns up within two seconds, Home.
+The lock watches more than the Settings app. Since Android 10 the **Default
+apps** and **Home app** pickers are drawn by PermissionController (the role
+manager's UI), so that package is watched. So is the package installer, whose
+uninstall confirmation is where every uninstall route ends up, whether it
+started from another launcher's app drawer or from a file manager. And so are
+the system chooser and the intent resolver, which draw the "Select a Home app"
+sheet. The full set of package names is `SettingsLockDetector.LOCKABLE_PACKAGES`.
+
+Within those windows, two kinds of screen count as locked: one where some
+visible text exactly matches an entry in a keyword list (in practice the
+title), and one that mentions the app by name anywhere, such as its App info
+page, the accessibility toggle or the uninstall dialog. A third case is matched
+by phrase rather than by our name. A launcher can raise a "Set X as your
+default home app?" request itself through the role manager, with no trip
+through Settings, and that dialog names the *other* launcher.
+
+By default the keywords are "Home app", "Default home app", "Default apps",
+"Choose default apps", "Launcher", "Select a Home app", "Select Home app", and,
+new in this round, "Multiple users", "Users", "Add user", "Add guest" and
+"Guest". A guest or second user is an unrestricted phone, and **Settings →
+System → Multiple users** is the gateway to one. The user switcher in Quick
+Settings is drawn by System UI, which the service never touches, so that route
+stays open.
+
+A locked screen gets a Home press straight away, plus a toast. Earlier builds
+pressed Back first; on the home-app picker a quick tap on another launcher
+could beat that, and Home is final.
 
 There is one exception, a timed window. **Allow changes for 10 min** and
 **Switch home app** in Protected settings both open one (the constant is
 `SETTINGS_UNLOCK_MINUTES`), and so do the **App info** and **Accessibility
 settings** buttons. While it is open the lock stands down completely and the
-screen shows until when.
+screen says "allowed for about N min". The window is measured in time since
+boot (`SystemClock.elapsedRealtime`), with the moment it was granted stored
+alongside its end, so moving the date or the clock cannot stretch it, and a
+reboot ends it early rather than late.
+
+One more stand-down, this one automatic. The app's own location prompt for the
+weather line is drawn by PermissionController and names the app, which is
+exactly what the lock watches for. `HomeActivity` tells the service to ignore
+locked screens for 60 seconds before it asks, so the prompt is not sent home.
 
 Detection is by on-screen text, because Android's Settings app does not expose
 distinct activity names for its sub-screens. That makes it English-first.
@@ -229,17 +277,37 @@ nothing useful there.
 
 ### Website filtering
 
-The service reads the browser's address bar. It knows the view ids for Chromium
-browsers (Chrome, Brave, Edge, Vivaldi, Kiwi) and for Firefox, carries
-best-effort ids for Samsung Internet, Opera and DuckDuckGo, and falls back to
-looking for any editable field that holds a URL. Browsers are found by asking
-the system what can open an `https` link, topped up with a fixed list of known
-package names.
+Any window that contains a WebView is inspected, browser or not. That covers
+the in-app browsers of WhatsApp, Instagram, X, the Google app and the like, and
+Chrome Custom Tabs. Browsers themselves are still found by asking the system
+what can open an `https` link, topped up with a fixed list of known package
+names, and they get the fast path.
+
+The URL is read from the first of these that turns up: a known address-bar id
+(Chromium's `url_bar`, shared by Chrome, Brave, Edge, Vivaldi, Kiwi; Firefox's
+toolbar id; and best-effort ids for Samsung Internet, Opera and DuckDuckGo);
+any view whose id looks like a URL field; any editable field holding a host;
+and finally any plain text holding a host outside the web content itself. That
+last rule is what catches in-app browsers and Custom Tabs, which show the
+domain in an ordinary TextView. Text inside the WebView is never read, so a
+page that merely mentions `reddit.com` cannot trigger a block. The walk stops
+after 500 nodes per window.
+
+Browsers are re-checked every 300 ms while their content changes. Other apps
+are walked on a window change and then at most every 1.2 seconds, which is
+enough to catch an in-app browser without taxing a chat list being scrolled.
+In split-screen every window belonging to the package is inspected, the
+unfocused half included.
 
 A page is judged only once it has loaded and the address bar is no longer
 focused, so typing is not interrupted. A blocked site gets a Back press; if the
 same host is still there within two seconds, Home. Either way a toast names the
-host.
+host. In allowlist mode a real address bar showing something that is not a
+host (`data:`, `file:`, `view-source:`, `chrome://`) is treated as a page that
+is not on the list and blocked; the browser's own new-tab and blank states are
+let through. An e-mail address on screen is never treated as a URL, and an
+internationalised domain is compared in its ASCII (punycode) form, which is
+the form the lists hold.
 
 ## Websites and presets
 
@@ -263,15 +331,29 @@ Block presets:
   project, public domain.
 - **adult**, **gambling**: derived at build time from the StevenBlack/hosts
   extensions (MIT), collapsed to registrable domains by
-  `tools/build_presets.py`. Expect the adult list to be large, around 41,000
+  `tools/build_presets.py`. Expect the adult list to be large, around 42,000
   domains. Licence text and the transformation applied are in
   `THIRD_PARTY_NOTICES.md`.
+- **proxies**, shown as "Proxies & mirrors": Google Translate, web caches,
+  archive.org and archive.today, 12ft.io and the alternative front ends
+  (Nitter, Invidious, Piped, Libreddit). Hand-curated, 24 domains,
+  and the only preset switched on by default. Address-bar matching sees one
+  host name, and every site on this list shows a blocked page under its own.
+  For the same reason archive.org was dropped from the learning preset, and a
+  unit test checks that nothing in an allow preset is also a proxy.
 
 Allow presets: **essentials**, **work**, **learning**, all hand-curated.
 
 Presets belong to a mode. An allow preset that is switched on has no effect
 while the mode is Blocklist, and the other way round. Both kinds share one
 "enabled" set, so flipping the mode and back keeps your choices.
+
+`tools/build_presets.py` writes every list and the catalog, and `--check`
+validates whatever is on disk without touching it. A full run downloads the two
+StevenBlack extensions and the Public Suffix List into `tools/.cache/`, so it
+needs the network once. The hand-curated lists, the proxies preset included,
+live in tables at the top of the script; edit them there, not in the `.txt`
+files, or the next run will overwrite your change.
 
 ## Weather and the network
 
@@ -283,7 +365,9 @@ else leaves the device, ever.
 
 Turn **Weather** off in Appearance settings and the app makes no network calls
 at all, and never asks for location. Deny the permission and it drops weather
-from the header and stops asking.
+from the header and stops asking. The prompt itself is a system dialog that
+names the app, so the home screen tells the accessibility service to stand
+down for a minute before asking; see the Settings lock above.
 
 ## Forgotten password, and getting out
 
@@ -292,7 +376,9 @@ There is no recovery inside the app, on purpose. In 1.0 the way out was
 which wipes the password hash and every list and starts you over from first-run
 setup. That still works, with a catch. If the accessibility service is on and
 **Lock Android Settings** is ticked, that App info page mentions the app by
-name, so the launcher backs out of it. Opening a 10-minute window needs the
+name, so the launcher sends you home from it. Uninstalling from another
+launcher's drawer or from a file manager ends at the package installer's
+confirmation, which is locked as well. Opening a 10-minute window needs the
 password you have forgotten.
 
 Safe Mode is the route.
@@ -319,9 +405,10 @@ app/src/main/java/com/distractionkiller/launcher/
 │   ├── AccessibilityStatus.kt   is the service on; links into Android Settings
 │   ├── AppEnforcement.kt        "send this app home?" rule (pure, tested)
 │   ├── EnforcementService.kt    the accessibility service itself
-│   ├── SettingsLockDetector.kt  locked-screen detection by text (pure, tested)
+│   ├── PresetParser.kt          index.tsv and .txt formats (pure, tested)
+│   ├── SettingsLockDetector.kt  locked-screen detection, unlock window (pure, tested)
 │   ├── SiteRules.kt             website mode + lists -> verdict (pure, tested)
-│   ├── UrlMatcher.kt            address-bar text -> host (pure, tested)
+│   ├── UrlMatcher.kt            on-screen text -> host (pure, tested)
 │   └── WebsitePresets.kt        reads assets/presets
 ├── data/
 │   ├── AppFilter.kt             mode + lists -> what to show (pure, tested)
@@ -346,6 +433,7 @@ app/src/main/java/com/distractionkiller/launcher/
 
 app/src/main/assets/presets/     index.tsv + one .txt per preset
 app/src/main/res/xml/enforcement_service.xml
+dist/                            the ready-made debug APK
 tools/build_presets.py           regenerates the presets (Python 3, stdlib only)
 THIRD_PARTY_NOTICES.md
 ```
@@ -368,19 +456,33 @@ off and on into Safe Mode takes about a minute. `adb uninstall` and a factory
 reset are not blocked either. What the lock does is make getting around it
 deliberate and slow; it does not make it impossible.
 
+**The service knows about a few more gaps.** For the seconds after boot before
+Android starts the accessibility service, nothing is enforced. The Quick
+Settings user switcher lives in System UI and can start a guest session without
+passing through the locked Settings page. A hidden app's picture-in-picture
+video keeps playing, because an accessibility service cannot close it. A page
+that goes fullscreen before the service has judged it hides its address bar,
+and with no URL on screen there is nothing to block. The proxies preset lists
+the proxies it knows about; one that is not on it shows a blocked site under
+its own host name like any other.
+
 **Nothing here has run on a real device.** The build compiles, lint is clean
-and 69 unit tests pass, but no phone or emulator has ever launched it. Expect a
+and 80 unit tests pass, but no phone or emulator has ever launched it. Expect a
 rough edge or two, and expect the first one to be in the accessibility service.
 
 **Settings detection is text-based and English-first.** Manufacturer Settings
 apps in other languages will sail past the lock until you add their screen
 titles to the keyword list. Even in English, an OEM that gives the page a new
-title is a gap until that title is added.
+title is a gap until that title is added, and an OEM whose Settings live in a
+package not on the lockable list is a gap until that name is added too.
 
 **The non-Chromium address-bar ids are unverified.** Chromium's `url_bar` and
 Firefox's toolbar id are known. Samsung Internet, Opera and DuckDuckGo got ids
 written from memory, which may be wrong; the generic fallback should still
-catch those browsers, but that too is untested.
+catch those browsers, but that too is untested. The same goes for in-app
+browsers and Custom Tabs: the rule assumes the app shows the domain as plain
+text outside the WebView, and an app that shows only the page title is not
+judged at all.
 
 **Two comments in the source flag API details I could not verify.** First,
 `android:enableOnBackInvokedCallback` in the manifest: I was unsure whether API

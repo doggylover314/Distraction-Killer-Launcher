@@ -293,12 +293,17 @@ DEEPER_ENTRIES = {
     "store.steampowered.com",
     "timesofindia.indiatimes.com",
     "tv.apple.com",
+    "translate.google.com",
+    "translate.yandex.com",
+    "webcache.googleusercontent.com",
+    "web.archive.org",
+    "redlib.catsarch.com",
 }
 
 # Entries that are public suffixes on purpose. Only sensible in ALLOW lists,
 # where matching every site under them is the point: all UK government and
 # NHS sites, every published Notion page, and GitHub's raw-file/asset host.
-SUFFIX_ENTRIES = {"gov.uk", "nhs.uk", "notion.site", "githubusercontent.com"}
+SUFFIX_ENTRIES = {"gov.uk", "nhs.uk", "notion.site", "githubusercontent.com", "translate.goog"}
 
 BLOCK_DISTRACTIONS = """
     # social networks
@@ -403,6 +408,21 @@ BLOCK_GAMES = """
     curseforge.com speedrun.com resetera.com neogaf.com
 """
 
+BLOCK_PROXIES = """
+    # Anything here can show a blocked site's pages under its own host name,
+    # which address-bar matching cannot see through. On by default in the app.
+    # translation proxies
+    translate.goog translate.google.com translate.yandex.com
+    # caches and archives
+    webcache.googleusercontent.com web.archive.org archive.today archive.ph archive.is
+    cachedview.nl 12ft.io
+    # web proxies
+    croxyproxy.com croxyproxy.rocks proxysite.com kproxy.com hide.me hidemyass-freeproxy.com
+    # alternative front ends
+    nitter.net libreddit.de teddit.net redlib.catsarch.com invidious.io yewtu.be piped.video
+    farside.link
+"""
+
 ALLOW_ESSENTIALS = """
     # search
     google.com bing.com duckduckgo.com startpage.com ecosia.org brave.com
@@ -463,7 +483,8 @@ ALLOW_LEARNING = """
     wikipedia.org wikimedia.org wiktionary.org britannica.com wolframalpha.com
     merriam-webster.com dictionary.com
     # libraries and archives
-    archive.org openlibrary.org gutenberg.org librivox.org worldcat.org
+    # archive.org is deliberately absent: the Wayback Machine can serve any blocked site.
+    openlibrary.org gutenberg.org librivox.org worldcat.org
     # research
     scholar.google.com arxiv.org jstor.org sciencedirect.com nature.com nih.gov doi.org
     researchgate.net academia.edu
@@ -506,6 +527,13 @@ HAND_CURATED = [
         "Gaming sites",
         "Browser game portals, game stores and launchers, and gaming news sites.",
         BLOCK_GAMES,
+    ),
+    (
+        "proxies",
+        "block",
+        "Proxies & mirrors",
+        "Translate, cache and archive proxies plus alternative front ends that show blocked sites under another name.",
+        BLOCK_PROXIES,
     ),
 ]
 
@@ -575,8 +603,8 @@ def check_curated(preset_id: str, kind: str, domains: list[str], psl: PublicSuff
         seen.add(host)
         reg = psl.registrable(host)
         if host in SUFFIX_ENTRIES:
-            if kind != "allow":
-                problems.append(f"{host!r} is a public suffix and only allowed in allow lists")
+            # A whole shared platform is a legitimate entry on either side:
+            # allowing gov.uk, or blocking the translate.goog proxy platform.
             if reg is not None:
                 problems.append(f"{host!r} is listed as a suffix entry but is registrable")
         elif reg is None:
