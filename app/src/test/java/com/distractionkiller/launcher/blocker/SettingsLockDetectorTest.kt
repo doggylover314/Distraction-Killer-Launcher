@@ -70,7 +70,7 @@ class SettingsLockDetectorTest {
     @Test
     fun `the role manager pickers and installers are lockable`() {
         assertTrue(locked("com.google.android.permissioncontroller", "Default apps", "Home app"))
-        assertTrue(locked("com.google.android.permissioncontroller", "App info", label))
+        assertTrue(locked("com.google.android.permissioncontroller", "App info", label, "Uninstall"))
         assertTrue(locked("com.google.android.packageinstaller", "Do you want to uninstall this app?", label))
         assertTrue(locked("com.android.intentresolver", "Select a Home app"))
         assertFalse(locked("com.google.android.packageinstaller", "Do you want to install this application?", "Other App"))
@@ -87,9 +87,33 @@ class SettingsLockDetectorTest {
     }
 
     @Test
-    fun `the guest user gateway is locked`() {
-        assertTrue(locked("com.android.settings", "Multiple users"))
-        assertTrue(locked("com.android.settings", "System", "Users"))
+    fun `the guest user page is locked but the System page that lists it is not`() {
+        assertTrue(locked("com.android.settings", "Multiple users", "You", "Add user", "Add guest"))
+        assertTrue(locked("com.android.settings", "Users", "Switch to Guest"))
+        // Pixel's System page has a "Multiple users" row next to updates, languages, date & time.
+        assertFalse(locked("com.android.settings", "System", "Languages", "Multiple users", "Date & time"))
         assertFalse(locked("com.android.settings", "Users & accounts settings for work"))
+    }
+
+    @Test
+    fun `permission and store pages that merely list the app are not locked`() {
+        // Permission manager > Location lists every app that holds the permission.
+        assertFalse(locked("com.google.android.permissioncontroller", "Location", "Maps", label, "Weather"))
+        assertFalse(locked("com.android.vending", "Manage apps & device", label, "Update"))
+        // With an action word on screen it is a page that can act on the app.
+        assertTrue(locked("com.google.android.permissioncontroller", "App info", label, "Uninstall"))
+        assertTrue(locked("com.android.vending", label, "Uninstall"))
+        // The Settings app keeps the bare-label rule: its App info page and the
+        // accessibility toggle both name the app.
+        assertTrue(locked("com.android.settings", "Accessibility", label))
+    }
+
+    @Test
+    fun `the home chooser is recognised only when it lists us`() {
+        assertTrue(SettingsLockDetector.isHomeChooser("android", listOf("Select a Home app", "Pixel Launcher", label, "Just once", "Always"), label))
+        assertTrue(SettingsLockDetector.isHomeChooser("com.android.intentresolver", listOf("Use as your home app", label), label))
+        assertFalse(SettingsLockDetector.isHomeChooser("android", listOf("Select a Home app", "Pixel Launcher", "Nova"), label))
+        assertFalse(SettingsLockDetector.isHomeChooser("android", listOf("Share with", label), label))
+        assertFalse(SettingsLockDetector.isHomeChooser("com.android.settings", listOf("Home app", label), label))
     }
 }

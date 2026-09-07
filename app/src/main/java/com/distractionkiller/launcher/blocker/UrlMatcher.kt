@@ -24,6 +24,14 @@ object UrlMatcher {
         var text = addressBarText?.toString()?.trim().orEmpty()
         if (text.isEmpty() || text.any { it.isWhitespace() }) return null
 
+        // Wrappers that show another page: judge the page, not the wrapper.
+        text = text.removePrefix("view-source:")
+        if (text.lowercase(Locale.ROOT).startsWith("about:reader")) {
+            text = text.substringAfter("url=", "").substringBefore('&')
+            text = runCatching { java.net.URLDecoder.decode(text, "UTF-8") }.getOrDefault(text)
+            if (text.isEmpty()) return null
+        }
+
         val schemeEnd = text.indexOf("://")
         // Without a scheme, "name@host" is far more likely an e-mail address
         // shown somewhere in an app than a URL with credentials. Treating it
@@ -46,6 +54,14 @@ object UrlMatcher {
         // is a search, not a navigation.
         if (!host.contains('.') && host != "localhost" && !host.startsWith("[")) return null
         if (host.any { !(it.isLetterOrDigit() || it == '.' || it == '-' || it == '[' || it == ']' || it == ':') }) return null
+        // The last label must be a real TLD: letters, at least two. That
+        // rejects "4.7", "12.99" and "v1.2.3", which ordinary apps show all
+        // the time. Dotted-quad IPv4 literals are the one numeric exception.
+        if (host != "localhost" && !host.startsWith("[")) {
+            val tld = host.substringAfterLast('.')
+            val tldIsWord = tld.length >= 2 && tld.all { it.isLetter() }
+            if (!tldIsWord && !isIpv4(host)) return null
+        }
         // Browsers show internationalised names in Unicode; lists hold the
         // ASCII (xn--) form. Compare in ASCII so the two agree.
         if (host.any { it.code > 127 }) {
@@ -74,6 +90,21 @@ object UrlMatcher {
         "brave://newtab",
         "edge://newtab",
     )
+
+    private fun isIpv4(host: String): Boolean {
+        val parts = host.split('.')
+        return parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.all(Char::isDigit) && p.toInt() in 0..255 }
+    }
+
+    /**
+     * Whether text looks like something typed into an address bar rather than
+     * a name that happens to contain a dot: it carries a scheme or a path.
+     * Used to keep "Booking.com" in a sender line from counting as a page.
+     */
+    fun looksLikeUrl(text: CharSequence?): Boolean {
+        val value = text?.toString()?.trim().orEmpty()
+        return value.contains("://") || value.contains('/')
+    }
 
     /** Canonical form of a user-entered pattern, or null if it is unusable. */
     fun normalizePattern(input: String): String? {

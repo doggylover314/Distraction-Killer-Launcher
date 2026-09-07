@@ -2,7 +2,9 @@ package com.distractionkiller.launcher.data
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.os.UserManager
 import android.os.Build
 import android.provider.AlarmClock
 import android.provider.MediaStore
@@ -42,6 +44,29 @@ class AppRepository(context: Context) {
             .sortedWith(AppFilter.LABEL_ORDER)
             .toList()
     }
+
+    /**
+     * Launchable packages across every profile this user can see (work
+     * profile, Secure Folder, cloned apps), for the enforcement service.
+     * Events from those profiles carry the same package name, and a clone of
+     * a hidden app must be bounced even when the personal copy is gone.
+     */
+    fun launchablePackagesAllProfiles(): Set<String> {
+        val result = loadLaunchableApps().mapTo(HashSet()) { it.packageName }
+        runCatching {
+            val launcherApps = appContext.getSystemService(LauncherApps::class.java) ?: return@runCatching
+            val userManager = appContext.getSystemService(UserManager::class.java) ?: return@runCatching
+            userManager.userProfiles.forEach { profile ->
+                launcherApps.getActivityList(null, profile).mapTo(result) { it.applicationInfo.packageName }
+            }
+        }
+        return result
+    }
+
+    /** Every installed home app, default or not. */
+    fun homeAppPackages(): Set<String> =
+        queryActivities(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))
+            .mapTo(HashSet()) { it.activityInfo.packageName }
 
     /**
      * Intent that opens an app's main entry point, or null if the package is

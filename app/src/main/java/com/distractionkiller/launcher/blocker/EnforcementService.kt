@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -63,6 +64,7 @@ class EnforcementService : AccessibilityService() {
     @Volatile private var launchable: Set<String> = emptySet()
     @Volatile private var exempt: Set<String> = emptySet()
     @Volatile private var browsers: Set<String> = emptySet()
+    @Volatile private var homeApps: Set<String> = emptySet()
 
     /** Derived from prefs + [launchable]; null means "recompute on next use". */
     @Volatile private var visibleCache: Set<String>? = null
@@ -146,6 +148,7 @@ class EnforcementService : AccessibilityService() {
         runCatching {
             when (event.eventType) {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                    retriedInspectionFor = null
                     if (isApplicationWindow(event) && enforceApp(packageName)) return
                     inspectWindow(packageName, force = true)
                 }
@@ -180,6 +183,16 @@ class EnforcementService : AccessibilityService() {
 
     private fun enforceApp(packageName: String): Boolean {
         if (!shouldSendHome(packageName)) return false
+        // A launcher that has just won the home role is where Home now leads.
+        // Bouncing it would loop; exempt it on the spot and log the takeover.
+        if (packageName in homeApps) {
+            val current = runCatching { appRepository.defaultHomePackage() }.getOrNull()
+            if (current == packageName) {
+                Log.w(TAG, "Another home app has become the default: $packageName")
+                exempt = exempt + packageName
+                return false
+            }
+        }
         goHome()
         handler.removeCallbacks(verifyForeground)
         handler.postDelayed(verifyForeground, ACTION_INTERVAL_MS + 150)
@@ -197,6 +210,7 @@ class EnforcementService : AccessibilityService() {
      * without taxing a chat list that is being scrolled.
      */
     private fun inspectWindow(packageName: String, force: Boolean) {
+        if (packageName in NEVER_INSPECT) return
         val isBrowser = packageName in browsers
         val isLockable = SettingsLockDetector.isLockablePackage(packageName)
         val webFiltering = prefs.siteBlockingEnabled
@@ -244,6 +258,7 @@ class EnforcementService : AccessibilityService() {
     private fun windowRootsFor(packageName: String): List<AccessibilityNodeInfo> {
         val roots = ArrayList<AccessibilityNodeInfo>(2)
         runCatching { windows }.getOrNull()?.forEach { window ->
+            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@forEach
             val root = runCatching { window.root }.getOrNull() ?: return@forEach
             if (root.packageName?.toString() == packageName) roots.add(root)
         }
@@ -262,7 +277,19 @@ class EnforcementService : AccessibilityService() {
         // it would block the whole web, which is only ever a mistake.
         if (custom.isEmpty() && presetDomains.isEmpty()) return false
 
-        val bar = findUrlView(packageName, root, isBrowser) ?: return false
+        val found = findUrlView(packageName, root, isBrowser)
+        if (found == null) {
+            // A browser window with a page but no address bar at all: an
+            // installed PWA, a Trusted Web Activity, fullscreen. There is no
+            // host to check, so in allowlist mode it is not on the list.
+            if (isBrowser && mode == WebsiteMode.ALLOWLIST && hasLargeWebView(root)) {
+                act(root, key = "no-address-bar")
+                toast(getString(R.string.toast_site_blocked, "page"))
+                return true
+            }
+            return false
+        }
+        val bar = found
         // While the user is typing, the bar holds half a URL. Judging that
         // would make every keystroke in allowlist mode a Back press. The page
         // is judged once it loads and the bar gives up focus.
@@ -271,19 +298,58 @@ class EnforcementService : AccessibilityService() {
         val text = if (bar.showingHint) "" else bar.text
         val host = UrlMatcher.hostOf(text)
         val block = when {
-            host != null -> SiteRules.shouldBlock(host, mode, custom, presetDomains)
-            // A real address bar showing something that is not a host (data:,
-            // file:, view-source:, chrome://) is a page too. In allowlist
-            // mode that page is not on the list, so it is blocked; only the
-            // browser's own new-tab states pass.
-            bar.isAddressBar && mode == WebsiteMode.ALLOWLIST -> !UrlMatcher.isBrowserInternal(text)
+            host != null -> {
+                // A bare name in ordinary text ("Booking.com" in a sender
+                // line next to a mail body) is only trusted in blocklist
+                // mode, where it can at most block what you listed. In
+                // allowlist mode it has to look like a URL.
+                val trusted = bar.isAddressBar || mode == WebsiteMode.BLOCKLIST || UrlMatcher.looksLikeUrl(text)
+                trusted && SiteRules.shouldBlock(host, mode, custom, presetDomains)
+            }
+            // A real address bar showing a non-host page (data:, file:,
+            // view-source:, chrome://) is a page too, and in allowlist mode it
+            // is not on the list. Search queries also sit in the bar on a
+            // results page, so only scheme-like text (it keeps a colon)
+            // counts, and the browser's own new-tab states never do.
+            bar.isAddressBar && mode == WebsiteMode.ALLOWLIST ->
+                text.contains(':') && !UrlMatcher.isBrowserInternal(text)
             else -> false
         }
-        if (!block) return false
+        if (block) {
+            act(root, key = host ?: text.toString())
+            toast(getString(R.string.toast_site_blocked, host ?: "page"))
+            return true
+        }
+        // Blocklist mode: the address bar may be clean while a preview sheet
+        // or panel shows another page's host; a plain host on screen outside
+        // the web content is still worth a look.
+        if (isBrowser && bar.isAddressBar && mode == WebsiteMode.BLOCKLIST) {
+            val walk = UrlWalk()
+            walkForUrl(root, walk, NODE_BUDGET)
+            val plainHost = walk.plain?.let { UrlMatcher.hostOf(nodeText(it)) }
+            if (plainHost != null && plainHost != host && SiteRules.shouldBlock(plainHost, mode, custom, presetDomains)) {
+                act(root, key = plainHost)
+                toast(getString(R.string.toast_site_blocked, plainHost))
+                return true
+            }
+        }
+        return false
+    }
 
-        escalate(key = host ?: text.toString())
-        toast(getString(R.string.toast_site_blocked, host ?: "page"))
-        return true
+    /**
+     * Back (then Home if stuck) is only right when this window has focus:
+     * in split-screen a Back press lands on the focused pane, which may be a
+     * form in some other app. An unfocused window goes straight Home.
+     */
+    private fun act(root: AccessibilityNodeInfo, key: String) {
+        val active = runCatching { root.window?.isActive }.getOrNull() ?: true
+        if (active) escalate(key) else goHome()
+    }
+
+    private fun hasLargeWebView(root: AccessibilityNodeInfo): Boolean {
+        val walk = UrlWalk()
+        walkForUrl(root, walk, NODE_BUDGET)
+        return walk.webViewSeen
     }
 
     private class UrlView(
@@ -324,7 +390,11 @@ class EnforcementService : AccessibilityService() {
         val walk = UrlWalk()
         walkForUrl(root, walk, NODE_BUDGET)
         if (!isBrowser && !walk.webViewSeen) return null
-        val node = walk.idMatch ?: walk.editable ?: walk.plain ?: return null
+        // A URL-ish id without a host only counts in a real browser, where
+        // an empty editable bar is meaningful (new tab). Elsewhere it is a
+        // search box or a login field and says nothing about the page.
+        val idMatch = walk.idMatch?.takeIf { isBrowser || UrlMatcher.hostOf(nodeText(it)) != null }
+        val node = idMatch ?: walk.editable ?: walk.plain ?: return null
         return UrlView(
             text = nodeText(node) ?: "",
             isAddressBar = node !== walk.plain,
@@ -343,14 +413,19 @@ class EnforcementService : AccessibilityService() {
     private fun walkForUrl(node: AccessibilityNodeInfo?, walk: UrlWalk, budget: Int): Int {
         if (node == null || budget <= 0) return budget
         if (node.className?.toString() == WEB_VIEW) {
-            walk.webViewSeen = true
+            // An ad banner is a WebView too. Only a WebView that takes up a
+            // real share of the screen marks this window as showing a page.
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.height() >= resources.displayMetrics.heightPixels * 2 / 5) walk.webViewSeen = true
             return budget - 1 // do not descend into page content
         }
         val id = node.viewIdResourceName
         val text = nodeText(node)
         val hostLike = text != null && UrlMatcher.hostOf(text) != null
         when {
-            id != null && URL_VIEW_ID_HINTS.any { id.contains(it, ignoreCase = true) } ->
+            id != null && (hostLike || node.isEditable) &&
+                URL_VIEW_ID_HINTS.any { id.contains(it, ignoreCase = true) } ->
                 if (walk.idMatch == null) walk.idMatch = node
             node.isEditable && hostLike -> if (walk.editable == null) walk.editable = node
             hostLike -> if (walk.plain == null) walk.plain = node
@@ -391,11 +466,31 @@ class EnforcementService : AccessibilityService() {
         ) || SettingsLockDetector.isHomeRoleDialog(packageName, texts)
         if (!locked) return false
 
+        // The system's own home chooser: Home would only reopen it, because
+        // Home *is* the unresolved intent. Pick ourselves instead.
+        if (SettingsLockDetector.isHomeChooser(packageName, texts, appLabel)) {
+            if (chooseSelfInHomeChooser(root)) toast(getString(R.string.toast_settings_locked))
+            return true
+        }
+
         // Home, not Back: on the home-app picker a quick tap on another
         // launcher would beat a Back press, and Home is final.
         goHome(immediate = true)
         toast(getString(R.string.toast_settings_locked))
         return true
+    }
+
+    private fun chooseSelfInHomeChooser(root: AccessibilityNodeInfo): Boolean {
+        val row = root.findAccessibilityNodeInfosByText(appLabel).firstOrNull() ?: return false
+        var target: AccessibilityNodeInfo? = row
+        while (target != null && !target.isClickable) target = target.parent
+        val clicked = target?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
+        if (clicked) {
+            // Newer choosers confirm with "Always"; older ones apply at once.
+            root.findAccessibilityNodeInfosByText("Always").firstOrNull { it.isClickable }
+                ?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        }
+        return clicked
     }
 
     private fun collectTexts(node: AccessibilityNodeInfo?, into: MutableList<CharSequence?>, budget: Int): Int {
@@ -450,7 +545,7 @@ class EnforcementService : AccessibilityService() {
     private fun reload() {
         scope.launch {
             runCatching {
-                val apps = appRepository.loadLaunchableApps()
+                val allLaunchable = appRepository.launchablePackagesAllProfiles()
                 val exemptions = appRepository.systemExemptPackages().toMutableSet()
                 // If another launcher has become the default, "home" now means
                 // that launcher. Sending it home would loop forever.
@@ -460,7 +555,8 @@ class EnforcementService : AccessibilityService() {
                         Log.w(TAG, "Another home app is the default: $other")
                         exemptions.add(other)
                     }
-                launchable = apps.mapTo(HashSet()) { it.packageName }
+                launchable = allLaunchable
+                homeApps = appRepository.homeAppPackages()
                 exempt = exemptions
                 browsers = appRepository.browserPackages()
                 visibleCache = null
@@ -500,6 +596,10 @@ class EnforcementService : AccessibilityService() {
         private const val WEB_VIEW = "android.webkit.WebView"
         private const val SOFT_INPUT_WINDOW = "android.inputmethodservice.SoftInputWindow"
 
+        /** Windows that never carry a URL or a lockable screen; not worth a walk. */
+        private val NEVER_INSPECT = setOf("com.android.systemui", "com.google.android.inputmethod.latin",
+            "com.samsung.android.honeyboard", "com.touchtype.swiftkey", "com.swiftkey.beta")
+
         /** Set by the service itself, so Settings can show whether it is live. */
         @Volatile var isRunning: Boolean = false
             private set
@@ -522,7 +622,7 @@ class EnforcementService : AccessibilityService() {
         /** Substrings of view ids that mark a URL display in any app. */
         val URL_VIEW_ID_HINTS = listOf(
             "url_bar", "urlbar", "url_view", "url_text", "url_field", "omnibox", "omnibar",
-            "address_bar", "addressbar", "location_bar", "locationbar", "domain",
+            "address_bar", "addressbar", "location_bar", "locationbar",
         )
     }
 }

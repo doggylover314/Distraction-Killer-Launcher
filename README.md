@@ -49,7 +49,7 @@ To check nothing is broken first:
 ./gradlew test lint
 ```
 
-Behind that sit 80 JVM unit tests: password hashing, the allowlist and
+Behind that sit 85 JVM unit tests: password hashing, the allowlist and
 blocklist rules, the search box, the launch counter, weather parsing, the URL
 matcher, the site rules, the app-enforcement rule, the Settings-screen detector
 and its unlock window, plus a pass over the bundled preset files themselves.
@@ -203,7 +203,10 @@ Any app not shown on the home screen that reaches the foreground by some other
 route (a notification, the share sheet, search, **Android Settings → Open**) is
 sent back to the home screen with a toast. Only apps with a launcher icon are
 candidates, so a file picker, a permission dialog or a share sheet belonging to
-an allowed app is never touched. Only real application windows are acted on,
+an allowed app is never touched. The candidate list spans every profile the
+user can see (work profile, Secure Folder, cloned apps), because events from a
+work-profile copy carry the same package name and a clone of a hidden app must
+be bounced even when the personal copy is gone. Only real application windows are acted on,
 too. A keyboard popping up is not an app arriving (Gboard has a launcher icon,
 and a Home press for every text field would make the phone unusable), and a
 picture-in-picture window is skipped because an accessibility service cannot
@@ -222,7 +225,8 @@ by name: Google, AOSP, Samsung), Pixel's Personal Safety app, every enabled
 keyboard, system UI, the permission dialogs and the package installer. If
 another launcher has become the default home app it is exempt as well, because
 "home" then means that launcher and sending it home would loop forever; the
-service logs a warning when it notices. For the exact lists see
+service re-checks the default the moment any home app reaches the foreground
+and logs a warning when it notices a takeover. For the exact lists see
 `AppEnforcement.FIXED_EXEMPTIONS` and `AppRepository.systemExemptPackages`.
 
 ### Lock Android Settings
@@ -233,27 +237,38 @@ manager's UI), so that package is watched. So is the package installer, whose
 uninstall confirmation is where every uninstall route ends up, whether it
 started from another launcher's app drawer or from a file manager. And so are
 the system chooser and the intent resolver, which draw the "Select a Home app"
-sheet. The full set of package names is `SettingsLockDetector.LOCKABLE_PACKAGES`.
+sheet, the Play Store (it can delete apps with its own confirmation) and the
+work-profile provisioner. The full set of package names is
+`SettingsLockDetector.LOCKABLE_PACKAGES`.
 
-Within those windows, two kinds of screen count as locked: one where some
+Within those windows, three kinds of screen count as locked. One where some
 visible text exactly matches an entry in a keyword list (in practice the
-title), and one that mentions the app by name anywhere, such as its App info
-page, the accessibility toggle or the uninstall dialog. A third case is matched
-by phrase rather than by our name. A launcher can raise a "Set X as your
-default home app?" request itself through the role manager, with no trip
-through Settings, and that dialog names the *other* launcher.
+title). One that mentions the app by name, such as its App info page, the
+accessibility toggle or the uninstall dialog; in PermissionController and the
+Play Store the name alone is not enough, because their permission lists and
+library name every app, so an action word ("Uninstall", "Force stop", "Clear
+storage", "Use ...") has to be on screen too. And the Multiple users page,
+recognised by its title together with one of its own controls ("Add user",
+"Add guest", "Switch to Guest"), because a guest or second user is an
+unrestricted phone. The System page that merely lists the Multiple users row
+is not locked, so system updates, languages and date and time stay reachable.
+The user switcher in Quick Settings is drawn by System UI, which the service
+never touches, so that route stays open.
+
+A fourth case is matched by phrase rather than by our name. A launcher can
+raise a "Set X as your default home app?" request itself through the role
+manager, with no trip through Settings, and that dialog names the *other*
+launcher.
 
 By default the keywords are "Home app", "Default home app", "Default apps",
-"Choose default apps", "Launcher", "Select a Home app", "Select Home app", and,
-new in this round, "Multiple users", "Users", "Add user", "Add guest" and
-"Guest". A guest or second user is an unrestricted phone, and **Settings →
-System → Multiple users** is the gateway to one. The user switcher in Quick
-Settings is drawn by System UI, which the service never touches, so that route
-stays open.
+"Choose default apps", "Launcher", "Select a Home app" and "Select Home app".
 
 A locked screen gets a Home press straight away, plus a toast. Earlier builds
 pressed Back first; on the home-app picker a quick tap on another launcher
-could beat that, and Home is final.
+could beat that, and Home is final. The one screen that never gets a Home
+press is the system's own "Select a Home app" chooser, shown when no default
+is set: Home would only reopen it. There the service taps this app's row (and
+"Always" if the chooser asks) instead.
 
 There is one exception, a timed window. **Allow changes for 10 min** and
 **Switch home app** in Protected settings both open one (the constant is
@@ -286,12 +301,22 @@ names, and they get the fast path.
 The URL is read from the first of these that turns up: a known address-bar id
 (Chromium's `url_bar`, shared by Chrome, Brave, Edge, Vivaldi, Kiwi; Firefox's
 toolbar id; and best-effort ids for Samsung Internet, Opera and DuckDuckGo);
-any view whose id looks like a URL field; any editable field holding a host;
-and finally any plain text holding a host outside the web content itself. That
-last rule is what catches in-app browsers and Custom Tabs, which show the
-domain in an ordinary TextView. Text inside the WebView is never read, so a
-page that merely mentions `reddit.com` cannot trigger a block. The walk stops
-after 500 nodes per window.
+any view whose id looks like a URL field and holds a host; any editable field
+holding a host; and finally any plain text holding a host outside the web
+content itself. That last rule is what catches in-app browsers and Custom
+Tabs, which show the domain in an ordinary TextView. Text inside the WebView
+is never read, so a page that merely mentions `reddit.com` cannot trigger a
+block, and only a WebView that fills at least two fifths of the screen marks a
+window as showing a page, so an ad banner does not turn a mail client into a
+browser. The walk stops after 500 nodes per window.
+
+Plain text is trusted less than an address bar. "4.7", "v1.2.3" and other
+dotted numbers never parse as hosts. A bare name such as a sender called
+"Booking.com" counts only in blocklist mode, where the worst it can do is
+block a site you listed; in allowlist mode plain text has to look like a URL
+(a scheme or a path) before it is judged, which means an in-app browser that
+shows only the bare domain is not enforced in allowlist mode. That is a known
+gap, chosen over making mail apps unusable.
 
 Browsers are re-checked every 300 ms while their content changes. Other apps
 are walked on a window change and then at most every 1.2 seconds, which is
@@ -301,13 +326,18 @@ unfocused half included.
 
 A page is judged only once it has loaded and the address bar is no longer
 focused, so typing is not interrupted. A blocked site gets a Back press; if the
-same host is still there within two seconds, Home. Either way a toast names the
-host. In allowlist mode a real address bar showing something that is not a
-host (`data:`, `file:`, `view-source:`, `chrome://`) is treated as a page that
-is not on the list and blocked; the browser's own new-tab and blank states are
-let through. An e-mail address on screen is never treated as a URL, and an
-internationalised domain is compared in its ASCII (punycode) form, which is
-the form the lists hold.
+same host is still there within two seconds, Home. In split-screen, where Back
+would land on the other pane, the unfocused browser goes straight Home. Either
+way a toast names the host. `view-source:` and Firefox's reader view are
+unwrapped and the page inside is judged. In allowlist mode a real address bar
+showing a scheme that is not a host page (`data:`, `file:`, `chrome://`) is
+treated as not on the list and blocked; search terms, which Chrome and Brave
+show in the bar on a results page, are not, and the browser's own new-tab and
+blank states are let through. A browser window with a page but no address bar
+at all (an installed PWA, a Trusted Web Activity, fullscreen) is blocked in
+allowlist mode too, since there is no host to check. An e-mail address on
+screen is never treated as a URL, and an internationalised domain is compared
+in its ASCII (punycode) form, which is the form the lists hold.
 
 ## Websites and presets
 
@@ -467,7 +497,7 @@ the proxies it knows about; one that is not on it shows a blocked site under
 its own host name like any other.
 
 **Nothing here has run on a real device.** The build compiles, lint is clean
-and 80 unit tests pass, but no phone or emulator has ever launched it. Expect a
+and 85 unit tests pass, but no phone or emulator has ever launched it. Expect a
 rough edge or two, and expect the first one to be in the accessibility service.
 
 **Settings detection is text-based and English-first.** Manufacturer Settings

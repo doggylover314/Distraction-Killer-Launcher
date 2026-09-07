@@ -20,6 +20,34 @@ class UrlMatcherTest {
         assertEquals("reddit.com", UrlMatcher.hostOf("reddit.com."))
         assertEquals("localhost", UrlMatcher.hostOf("localhost:3000/app"))
         assertEquals("[::1]", UrlMatcher.hostOf("http://[::1]:8080/"))
+        assertEquals("192.168.1.1", UrlMatcher.hostOf("192.168.1.1:8080/admin"))
+    }
+
+    @Test
+    fun `numbers and file names that contain dots are not hosts`() {
+        assertNull(UrlMatcher.hostOf("4.7"))
+        assertNull(UrlMatcher.hostOf("12.99"))
+        assertNull(UrlMatcher.hostOf("v1.2.3"))
+        assertNull(UrlMatcher.hostOf("1.2.3.4.5"))
+        assertNull(UrlMatcher.hostOf("999.1.1.1"))
+        // A file name still parses; the caller decides whether a bare name counts.
+        assertEquals("invoice.pdf", UrlMatcher.hostOf("invoice.pdf"))
+    }
+
+    @Test
+    fun `wrappers that show another page are unwrapped`() {
+        assertEquals("reddit.com", UrlMatcher.hostOf("view-source:https://reddit.com/r/all"))
+        assertEquals("www.reddit.com", UrlMatcher.hostOf("about:reader?url=https%3A%2F%2Fwww.reddit.com%2Fr%2Fall"))
+        assertNull(UrlMatcher.hostOf("about:reader"))
+    }
+
+    @Test
+    fun `looks like a url versus a bare name`() {
+        assertTrue(UrlMatcher.looksLikeUrl("https://reddit.com"))
+        assertTrue(UrlMatcher.looksLikeUrl("reddit.com/r/all"))
+        assertFalse(UrlMatcher.looksLikeUrl("Booking.com"))
+        assertFalse(UrlMatcher.looksLikeUrl("invoice.pdf"))
+        assertFalse(UrlMatcher.looksLikeUrl(null))
     }
 
     @Test

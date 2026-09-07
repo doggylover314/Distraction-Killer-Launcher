@@ -22,13 +22,24 @@ object SettingsLockDetector {
         // Title of the system's own chooser when no default home app is set.
         "Select a Home app",
         "Select Home app",
-        // A guest or second user is an unrestricted phone; the gateway is
-        // Settings > System > Multiple users.
-        "Multiple users",
-        "Users",
-        "Add user",
-        "Add guest",
-        "Guest",
+    )
+
+    /**
+     * A guest or second user is an unrestricted phone. The gateway page is
+     * Settings > System > Multiple users, recognised by its title plus one of
+     * its own controls, so the System page that merely lists the row (and
+     * with it system updates, languages and date & time) is not locked.
+     */
+    private val USERS_PAGE_TITLES = setOf("Multiple users", "Users", "Users & accounts")
+    private val USERS_PAGE_MARKERS = setOf(
+        "Add user", "Add guest", "Switch to Guest", "Guest mode", "Allow multiple users",
+        "Set up work profile",
+    )
+
+    /** Words that turn "this screen names the app" into "this screen can act on it". */
+    private val ACTION_WORDS = listOf(
+        "uninstall", "force stop", "clear storage", "clear data", "disable", "turn off",
+        "remove", "delete", "open by default", "use ", "allow restricted settings",
     )
 
     /**
@@ -51,11 +62,25 @@ object SettingsLockDetector {
         "com.google.android.packageinstaller",
         "com.samsung.android.packageinstaller",
         "com.miui.packageinstaller",
+        // Play Store can delete apps with its own confirmation.
+        "com.android.vending",
+        // Creates work profiles, which are unrestricted.
+        "com.android.managedprovisioning",
         // The system's own "pick a home app" chooser, shown when no default is
         // set. Recent builds host it in a separate resolver package.
         "android",
         "com.android.intentresolver",
     )
+
+    /** Packages where the app's name appears on harmless pages too (permission lists). */
+    private val LABEL_NEEDS_ACTION_WORD: Set<String> = setOf(
+        "com.android.permissioncontroller",
+        "com.google.android.permissioncontroller",
+        "com.samsung.android.permissioncontroller",
+        "com.android.vending",
+    )
+
+    private val CHOOSER_PACKAGES: Set<String> = setOf("android", "com.android.intentresolver")
 
     /**
      * Packages that draw the "Set X as your default home app?" request a
@@ -102,12 +127,41 @@ object SettingsLockDetector {
         if (!isLockablePackage(packageName)) return false
         val texts = windowTexts.mapNotNull { it?.toString()?.trim() }.filter { it.isNotEmpty() }
         if (texts.isEmpty()) return false
-        // Titles are matched whole; the app label may sit inside a longer
-        // sentence ("Use Distraction Killer Launcher?").
-        return texts.any { text ->
-            text.contains(appLabel, ignoreCase = true) ||
-                keywords.any { keyword -> text.equals(keyword, ignoreCase = true) }
+
+        val hasKeyword = texts.any { text -> keywords.any { it.equals(text, ignoreCase = true) } }
+        if (hasKeyword) return true
+        if (isUsersPage(texts)) return true
+
+        // The app label may sit inside a longer sentence ("Use Distraction
+        // Killer Launcher?"). On pages that list every app (permission
+        // managers, the Play library) the name alone means nothing; there an
+        // action word must be on screen as well.
+        val namesApp = texts.any { it.contains(appLabel, ignoreCase = true) }
+        if (!namesApp) return false
+        if (packageName !in LABEL_NEEDS_ACTION_WORD) return true
+        return texts.any { text -> ACTION_WORDS.any { text.contains(it, ignoreCase = true) } }
+    }
+
+    private fun isUsersPage(texts: List<String>): Boolean =
+        texts.any { t -> USERS_PAGE_TITLES.any { it.equals(t, ignoreCase = true) } } &&
+            texts.any { t -> USERS_PAGE_MARKERS.any { it.equals(t, ignoreCase = true) } }
+
+    /**
+     * The system's "pick a home app" chooser. Sending it Home would only
+     * reopen it (Home *is* the unresolved intent), so the service picks this
+     * app's row instead of pressing anything.
+     */
+    fun isHomeChooser(packageName: String?, windowTexts: Collection<CharSequence?>, appLabel: String): Boolean {
+        if (packageName !in CHOOSER_PACKAGES) return false
+        val texts = windowTexts.mapNotNull { it?.toString()?.trim() }
+        val namesApp = texts.any { it.contains(appLabel, ignoreCase = true) }
+        // Our own name contains "Launcher"; only the other texts may vouch
+        // for this being the home chooser.
+        val looksLikeHomeChooser = texts.filterNot { it.contains(appLabel, ignoreCase = true) }.any { t ->
+            t.contains("home app", ignoreCase = true) || t.contains("launcher", ignoreCase = true) ||
+                t.equals("Always", ignoreCase = true) || t.equals("Just once", ignoreCase = true)
         }
+        return namesApp && looksLikeHomeChooser
     }
 
     /**
