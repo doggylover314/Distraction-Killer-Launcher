@@ -34,11 +34,13 @@ of it.
 From the project root:
 
 ```bash
-./gradlew assembleDebug
+./gradlew assembleRelease
 ```
 
-Your APK lands at `app/build/outputs/apk/debug/app-debug.apk`, signed with your
-machine's debug keystore, which is all a sideload needs.
+Your APK lands at `app/build/outputs/apk/release/app-release.apk`, signed with
+the release key committed under `signing/`. `./gradlew assembleDebug` still
+works and is fine for iterating, but see the Play Protect note below before
+putting a debug build on a phone.
 
 In Android Studio the equivalent is **Build → Build Bundle(s) / APK(s) → Build
 APK(s)**, or just press Run with your phone connected.
@@ -57,51 +59,39 @@ Android Lint runs across the module.
 
 ### The ready-made APK
 
-`dist/distraction-killer-launcher-1.1-debug.apk` is the debug build, signed
-with the debug key of the machine that built it. It installs like any other
-APK. What it will not do is accept an update signed with a different debug key,
-and every Android Studio installation generates its own. So if you install the
-dist APK and later want to install a build of your own, either run
-`adb uninstall com.distractionkiller.launcher` first (you lose the password and
-the lists), or copy `~/.android/debug.keystore` from the machine that built the
-dist APK onto yours before you build.
+`dist/distraction-killer-launcher-1.1-release.apk` is a release build, signed
+with the key in `signing/`. Because that key is in the repo, any clone builds
+an APK that installs straight over it as an update, keeping your password and
+your lists.
 
-### A release APK
+### Play Protect and debug builds
 
-`./gradlew assembleRelease` produces an **unsigned** APK, which a phone will
-refuse to install. No release key is in the repo; generating one was not
-possible in the environment that produced 1.1. To make your own:
+Version 1.1 first shipped as a debug APK, and Play Protect refused to install
+it. Two things in a debug build invite that. It is signed with the Android
+debug key, `CN=Android Debug`, which every SDK installation on earth shares,
+and its manifest carries `android:debuggable="true"`. An app that also asks for
+an accessibility service is exactly the shape a scanner is looking for.
+
+A release build fixes both: a unique signing key, no debuggable flag, and v2
+plus v3 signatures. Confirm any APK yourself with:
 
 ```bash
-keytool -genkey -v -keystore distraction-killer.jks -keyalg RSA -keysize 2048 \
-        -validity 10000 -alias distraction-killer
+$ANDROID_HOME/build-tools/35.0.0/apksigner verify --print-certs -v your.apk
 ```
 
-then add a `signingConfigs` block to `app/build.gradle.kts` and point the
-release build type at it:
+`Signer #1 certificate DN` should name this app, not `CN=Android Debug`.
 
-```kotlin
-android {
-    signingConfigs {
-        create("release") {
-            storeFile = file(System.getenv("DK_KEYSTORE") ?: "distraction-killer.jks")
-            storePassword = System.getenv("DK_STORE_PASSWORD")
-            keyAlias = "distraction-killer"
-            keyPassword = System.getenv("DK_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig = signingConfigs.getByName("release")
-            // existing minify and proguard settings stay as they are
-        }
-    }
-}
-```
+I cannot test Play Protect from a build machine, so I cannot promise it stays
+quiet. If it still objects, the warning normally has a **More details** and
+then an **Install anyway** underneath it. Failing that, Play Store → your
+profile picture → **Play Protect** → gear icon → **Scan apps with Play
+Protect** turns the scanning off. That is a device-wide setting protecting you
+from every other sideloaded app too, so turn it back on afterwards.
 
-Keep the passwords in environment variables or `local.properties`, never in
-git. Android Studio's **Build → Generate Signed App Bundle / APK** wizard does
-the same thing through a dialog.
+### Rotating the signing key
+
+See `signing/README.md`. A different key cannot update an existing install, so
+uninstall first if you rotate.
 
 ## Install on a phone
 
@@ -113,10 +103,10 @@ the same thing through a dialog.
 
 ```bash
 adb devices              # your phone should be listed as "device", not "unauthorized"
-adb install -r dist/distraction-killer-launcher-1.1-debug.apk
+adb install -r dist/distraction-killer-launcher-1.1-release.apk
 ```
 
-Swap in `app/build/outputs/apk/debug/app-debug.apk` if you built it yourself.
+Swap in `app/build/outputs/apk/release/app-release.apk` if you built it yourself.
 `-r` reinstalls over an existing copy and keeps your settings, provided the
 signing key matches (see above). For a genuinely clean slate, run
 `adb uninstall com.distractionkiller.launcher` first.
