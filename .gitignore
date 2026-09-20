@@ -9,5 +9,8 @@ captures/
 .cxx
 *.apk
 *.keystore
+# The release key never goes in this repo; it is public.
+signing/*.jks
+signing/keystore.properties
 !debug.keystore
 !dist/*.apk

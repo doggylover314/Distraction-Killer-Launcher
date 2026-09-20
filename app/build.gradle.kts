@@ -6,14 +6,21 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// Release signing. The key lives in the repo on purpose; see signing/README.md.
-// If it is ever missing the release build still assembles, just unsigned,
-// rather than failing the whole build.
+// Release signing. The key is deliberately NOT in this repo, which is public:
+// a committed key lets anyone build an APK that Android will accept as an
+// update to an existing install. Supply it through signing/keystore.properties
+// (untracked, see signing/README.md) or through DK_* environment variables.
+// A missing key degrades to an unsigned release build rather than failing the
+// whole build, so `assembleDebug` and the tests still work in a fresh clone.
 val keystoreProperties = Properties().apply {
     val file = rootProject.file("signing/keystore.properties")
     if (file.exists()) file.inputStream().use { load(it) }
 }
-val releaseKeystore = keystoreProperties.getProperty("storeFile")?.let { rootProject.file(it) }
+
+fun signingValue(environmentVariable: String, property: String): String? =
+    System.getenv(environmentVariable) ?: keystoreProperties.getProperty(property)
+
+val releaseKeystore = signingValue("DK_KEYSTORE", "storeFile")?.let { rootProject.file(it) }
 val hasReleaseKey = releaseKeystore?.exists() == true
 
 android {
@@ -32,9 +39,9 @@ android {
         if (hasReleaseKey) {
             create("release") {
                 storeFile = releaseKeystore
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
+                storePassword = signingValue("DK_STORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("DK_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("DK_KEY_PASSWORD", "keyPassword")
                 // v2 covers everything from Android 7 and is what minSdk 26
                 // needs; v3 is what current APKs carry, so ship both. v1 (JAR
                 // signing) is legacy and irrelevant above API 24.

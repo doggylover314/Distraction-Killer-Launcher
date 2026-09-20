@@ -37,10 +37,12 @@ From the project root:
 ./gradlew assembleRelease
 ```
 
-Your APK lands at `app/build/outputs/apk/release/app-release.apk`, signed with
-the release key committed under `signing/`. `./gradlew assembleDebug` still
-works and is fine for iterating, but see the Play Protect note below before
-putting a debug build on a phone.
+Your APK lands at `app/build/outputs/apk/release/app-release.apk`. Signing it
+needs the keystore, which is not in this repository; `signing/README.md`
+explains where to put it. Without it the release build still assembles, just
+unsigned, and a phone will refuse an unsigned APK. `./gradlew assembleDebug`
+needs nothing and is fine for iterating, but read the Play Protect note below
+before putting a debug build on a phone.
 
 In Android Studio the equivalent is **Build → Build Bundle(s) / APK(s) → Build
 APK(s)**, or just press Run with your phone connected.
@@ -59,10 +61,22 @@ Android Lint runs across the module.
 
 ### The ready-made APK
 
-`dist/distraction-killer-launcher-1.1-release.apk` is a release build, signed
-with the key in `signing/`. Because that key is in the repo, any clone builds
-an APK that installs straight over it as an update, keeping your password and
-your lists.
+`dist/distraction-killer-launcher-1.1-release.apk` is a release build. Install
+it over adb:
+
+```bash
+adb install -r dist/distraction-killer-launcher-1.1-release.apk
+```
+
+Anything built later with the same keystore installs straight over it as an
+update, keeping your password and your lists. Build with a different key and
+Android will refuse until you uninstall.
+
+An earlier version of this file said the signing key lived in `signing/`. It
+did, briefly, while the repository was assumed to be private. It is public, so
+the key was replaced and the new one is kept out of git. The old key is still
+in the history and that is harmless, because nothing is signed with it: it was
+retired before any build reached a phone.
 
 ### Play Protect and debug builds
 
