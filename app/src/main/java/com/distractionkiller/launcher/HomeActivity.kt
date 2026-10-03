@@ -53,6 +53,15 @@ class HomeActivity : ComponentActivity() {
      */
     private val resumeCounter = mutableIntStateOf(0)
 
+    /**
+     * Drives only the search reset. Kept apart from [resumeCounter] because a
+     * Home press on a launcher that is already in front delivers onNewIntent,
+     * which can happen as often as every 600 ms while enforcement bounces an
+     * app that keeps relaunching. Sharing one counter would re-run the whole
+     * PackageManager query for each of those presses.
+     */
+    private val searchResetCounter = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         prefs = Prefs(this)
         setTheme(prefs.themeMode.windowThemeResId())
@@ -92,6 +101,7 @@ class HomeActivity : ComponentActivity() {
                         prefs = prefs,
                         appRepository = appRepository,
                         refreshKey = refreshKey,
+                        searchResetKey = searchResetCounter.intValue,
                     )
                 }
             }
@@ -101,6 +111,19 @@ class HomeActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         resumeCounter.intValue++
+        searchResetCounter.intValue++
+    }
+
+    /**
+     * Pressing Home while the launcher is already in front. The activity is
+     * singleTask, so the system re-delivers the intent here and onResume never
+     * fires; without this bump the search box would survive the Home press.
+     * onResume still covers the other route: coming back after an app launch.
+     * Nothing a reload could pick up has changed, so only the search resets.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        searchResetCounter.intValue++
     }
 }
 
@@ -109,6 +132,7 @@ private fun HomeRoute(
     prefs: Prefs,
     appRepository: AppRepository,
     refreshKey: Int,
+    searchResetKey: Int,
 ) {
     val context = LocalContext.current
     val weatherRepository = remember { WeatherRepository(context) }
@@ -184,6 +208,7 @@ private fun HomeRoute(
     HomeScreen(
         apps = apps,
         mode = mode,
+        resetKey = searchResetKey,
         isLoading = isLoading,
         weather = weather,
         config = config,

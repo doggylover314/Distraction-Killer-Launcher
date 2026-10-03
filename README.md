@@ -180,10 +180,16 @@ can reach:
 - Clock on or off, following the system's 12/24-hour setting or forcing one.
 - Day and date, battery, weather, Fahrenheit.
 - Focus note: one line of your own under the date.
-- Search box on the home screen. It filters the apps already shown and cannot
-  find hidden ones, which is why it needs no password.
+- Search box on the home screen. It matches the app names you see on screen,
+  not package ids, among the apps already shown. It cannot find hidden ones,
+  which is why it needs no password. It empties itself when you press Home or
+  come back from an app.
 - "Opens today": a small count next to each app, reset at midnight.
 - Package names under each app name.
+- App dock: a text row of up to five apps pinned under the list. The saved
+  choices are checked against the visible list every time the home screen is
+  drawn, so the dock can never show an app the protected settings hide, which
+  is why it needs no password.
 
 A **Protected settings (password)** button at the top leads to the password
 prompt and then to everything that changes what the phone can reach: the home
@@ -448,6 +454,7 @@ app/src/main/java/com/distractionkiller/launcher/
 │   ├── AppFilter.kt             mode + lists -> what to show (pure, tested)
 │   ├── AppRepository.kt         PackageManager queries, exemptions, browsers
 │   ├── Appearance.kt            theme, text size and clock format enums
+│   ├── DockList.kt              dock order, limit and visible-list check (pure, tested)
 │   ├── LaunchCounter.kt         "opens today" (pure, tested)
 │   ├── LaunchableApp.kt
 │   ├── LauncherMode.kt

@@ -20,6 +20,9 @@ data class HomeUiConfig(
     val showPackageNames: Boolean,
     val showSearchBar: Boolean,
     val showLaunchCounts: Boolean,
+    val dockEnabled: Boolean,
+    /** Raw preference order. Not yet checked against what is visible, see HomeScreen. */
+    val dockPackages: List<String>,
     /** null when the focus note is switched off. */
     val focusNote: String?,
 ) {
@@ -36,6 +39,8 @@ data class HomeUiConfig(
             showPackageNames = prefs.showPackageNames,
             showSearchBar = prefs.showSearchBar,
             showLaunchCounts = prefs.showLaunchCounts,
+            dockEnabled = prefs.dockEnabled,
+            dockPackages = prefs.dockPackages,
             focusNote = prefs.focusNoteText.trim().takeIf { prefs.focusNoteEnabled && it.isNotEmpty() },
         )
     }

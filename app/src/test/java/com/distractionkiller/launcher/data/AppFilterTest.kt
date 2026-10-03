@@ -98,13 +98,72 @@ class AppFilterTest {
     }
 
     @Test
-    fun `search matches label and package, case insensitively`() {
+    fun `search matches the label case-insensitively`() {
         val apps = listOf(phone, camera, games)
         assertEquals(listOf(phone), AppFilter.search(apps, "pho"))
         assertEquals(listOf(phone), AppFilter.search(apps, "PHONE"))
-        assertEquals(listOf(games), AppFilter.search(apps, "com.example.games"))
+        assertEquals(listOf(games), AppFilter.search(apps, "sInK"))
+    }
+
+    @Test
+    fun `search by package id works only when package matching is switched on`() {
+        val apps = listOf(phone, camera, games)
+        assertEquals(listOf(games), AppFilter.search(apps, "com.example.games", matchPackageNames = true))
+    }
+
+    @Test
+    fun `search ignores package ids by default`() {
+        val apps = listOf(phone, camera, games)
+        assertTrue(AppFilter.search(apps, "com.example.games").isEmpty())
+        // "example" is in every package id and in no label.
+        assertTrue(AppFilter.search(apps, "example").isEmpty())
+    }
+
+    @Test
+    fun `search ranks label prefixes before other label matches`() {
+        val googleHome = LaunchableApp("com.google.home", "Google Home")
+        val messages = LaunchableApp("com.example.messages", "Messages")
+        val apps = listOf(googleHome, messages, phone).sortedWith(AppFilter.LABEL_ORDER)
+        // Alphabetical order alone would put Google Home first.
+        assertEquals(listOf(messages, googleHome), AppFilter.search(apps, "me"))
+    }
+
+    @Test
+    fun `search keeps label order inside each rank`() {
+        val zebra = LaunchableApp("com.z", "Zebra Mail")
+        val mailbox = LaunchableApp("com.m", "Mailbox")
+        val aMail = LaunchableApp("com.a", "A Mail")
+        val webmail = LaunchableApp("com.w", "Webmail")
+        val result = AppFilter.search(listOf(zebra, webmail, mailbox, aMail), "mail")
+        assertEquals(listOf(mailbox, aMail, webmail, zebra), result)
+    }
+
+    @Test
+    fun `search puts package-only matches last when package matching is on`() {
+        val labelHit = LaunchableApp("com.zzz.other", "Zed Notes")
+        val packageHit = LaunchableApp("com.notes.app", "Aardvark")
+        val prefixHit = LaunchableApp("com.yyy.other", "Notes Plus")
+        val result = AppFilter.search(
+            listOf(packageHit, labelHit, prefixHit),
+            "notes",
+            matchPackageNames = true,
+        )
+        assertEquals(listOf(prefixHit, labelHit, packageHit), result)
+    }
+
+    @Test
+    fun `search with a blank query returns the list unchanged`() {
+        val apps = listOf(phone, camera, games)
+        assertEquals(apps, AppFilter.search(apps, ""))
         assertEquals(apps, AppFilter.search(apps, "   "))
+        assertEquals(apps, AppFilter.search(apps, "   ", matchPackageNames = true))
+    }
+
+    @Test
+    fun `search with no match returns nothing`() {
+        val apps = listOf(phone, camera, games)
         assertTrue(AppFilter.search(apps, "nothing here").isEmpty())
+        assertTrue(AppFilter.search(apps, "nothing here", matchPackageNames = true).isEmpty())
     }
 
     private companion object {

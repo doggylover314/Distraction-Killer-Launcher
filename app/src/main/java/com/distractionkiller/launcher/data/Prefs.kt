@@ -204,6 +204,21 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_SHOW_COUNTS, false)
         set(value) = prefs.edit { putBoolean(KEY_SHOW_COUNTS, value) }
 
+    var dockEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DOCK_ENABLED, false)
+        set(value) = prefs.edit { putBoolean(KEY_DOCK_ENABLED, value) }
+
+    /**
+     * Ordered package names for the dock. The dock is resolved against the
+     * visible app list at render time, so an entry for a hidden or uninstalled
+     * app simply draws nothing. It can therefore never surface an app the
+     * protected tier has hidden, which is why it belongs in the no-password
+     * tier. Stored as one string because a string set has no order.
+     */
+    var dockPackages: List<String>
+        get() = DockList.decode(prefs.getString(KEY_DOCK_PACKAGES, null))
+        set(value) = prefs.edit { putString(KEY_DOCK_PACKAGES, DockList.encode(value)) }
+
     var focusNoteEnabled: Boolean
         get() = prefs.getBoolean(KEY_NOTE_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_NOTE_ENABLED, value) }
@@ -338,6 +353,8 @@ class Prefs(context: Context) {
         private const val KEY_SHOW_PACKAGES = "show_package_names"
         private const val KEY_SHOW_SEARCH = "show_search_bar"
         private const val KEY_SHOW_COUNTS = "show_launch_counts"
+        private const val KEY_DOCK_ENABLED = "dock_enabled"
+        private const val KEY_DOCK_PACKAGES = "dock_packages"
         private const val KEY_NOTE_ENABLED = "focus_note_enabled"
         private const val KEY_NOTE_TEXT = "focus_note_text"
         private const val KEY_LOCATION_ASKED = "location_permission_asked"

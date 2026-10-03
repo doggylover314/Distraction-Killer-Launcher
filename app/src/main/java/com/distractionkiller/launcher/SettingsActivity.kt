@@ -8,6 +8,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -83,22 +84,41 @@ private fun SettingsRoute(
 
     var apps by remember { mutableStateOf(emptyList<LaunchableApp>()) }
     var isLoading by remember { mutableStateOf(true) }
+    // Kept apart from an empty list: "the query failed" and "nothing to show"
+    // look the same in [apps], and the Appearance screen must not call every
+    // saved dock entry hidden on the strength of a failed query.
+    var loadFailed by remember { mutableStateOf(false) }
+    var loadAttempt by remember { mutableIntStateOf(0) }
 
     // Back from either inner screen returns to Appearance and re-locks.
     BackHandler(enabled = screen != Screen.APPEARANCE) { screen = Screen.APPEARANCE }
 
-    LaunchedEffect(screen) {
-        if (screen != Screen.PROTECTED || apps.isNotEmpty()) return@LaunchedEffect
+    // Both tiers need the list: Protected to edit it, Appearance to offer the
+    // dock only apps the home screen shows. Keyed on the attempt, not on the
+    // screen: the query is blocking and cannot be cancelled mid-flight, so
+    // restarting it on every navigation would leave the discarded ones running.
+    LaunchedEffect(loadAttempt) {
         isLoading = true
-        apps = withContext(Dispatchers.IO) {
-            runCatching { appRepository.loadLaunchableApps() }.getOrDefault(emptyList())
-        }
+        loadFailed = false
+        withContext(Dispatchers.IO) { runCatching { appRepository.loadLaunchableApps() } }
+            .onSuccess { apps = it }
+            .onFailure { loadFailed = true }
         isLoading = false
+    }
+
+    // A failed load is tried again on the next screen change, as before, but
+    // never while one is still running.
+    LaunchedEffect(screen) {
+        if (loadFailed && !isLoading) loadAttempt++
     }
 
     when (screen) {
         Screen.APPEARANCE -> AppearanceSettingsScreen(
             prefs = prefs,
+            apps = apps,
+            isLoading = isLoading,
+            loadFailed = loadFailed,
+            onRetryLoad = { loadAttempt++ },
             onOpenProtected = { screen = Screen.PROMPT },
             onDone = onFinish,
             // Re-themes this activity immediately instead of on the next visit.

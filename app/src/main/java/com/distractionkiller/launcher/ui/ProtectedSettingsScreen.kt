@@ -122,7 +122,8 @@ fun ProtectedSettingsScreen(
         LauncherMode.ALLOWLIST -> allowlist
         LauncherMode.BLOCKLIST -> blocklist
     }
-    val visibleApps = remember(apps, query) { AppFilter.search(apps, query) }
+    // Package ids are printed under every row here, so matching them is useful.
+    val visibleApps = remember(apps, query) { AppFilter.search(apps, query, matchPackageNames = true) }
 
     fun grantUnlockWindow() {
         val now = SystemClock.elapsedRealtime()

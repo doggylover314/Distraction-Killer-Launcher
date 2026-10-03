@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,31 +20,40 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.distractionkiller.launcher.data.AppFilter
+import com.distractionkiller.launcher.data.DockList
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.LauncherMode
 import com.distractionkiller.launcher.data.TextSize
 import com.distractionkiller.launcher.weather.WeatherSnapshot
 
 /**
- * The home screen: header, a plain text list of app names, and a way into
- * Settings. No icons, by request, and no wallpaper-dependent chrome.
+ * The home screen: header, a plain text list of app names, an optional text
+ * dock, and a way into Settings. No icons, by request, and no
+ * wallpaper-dependent chrome.
+ *
+ * [resetKey] changes whenever the launcher is resumed or Home is pressed again;
+ * it throws away the half-typed search so the list is never left filtered.
  */
 @Composable
 fun HomeScreen(
     apps: List<LaunchableApp>,
     mode: LauncherMode,
+    resetKey: Int,
     isLoading: Boolean,
     weather: WeatherSnapshot?,
     config: HomeUiConfig,
@@ -51,11 +61,29 @@ fun HomeScreen(
     onLaunch: (LaunchableApp) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
+    var query by remember(resetKey) { mutableStateOf("") }
+
+    // Emptying the text is not enough: the field would keep focus and leave the
+    // keyboard hanging over the list the user just returned to.
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(resetKey) {
+        focusManager.clearFocus(force = true)
+        keyboard?.hide()
+    }
+
     // The search box only narrows what is already visible; it never reaches
     // hidden apps, so it is safe to leave unprotected.
     val shownApps = remember(apps, query, config.showSearchBar) {
+        // Label only (the default): people type the name they see on screen.
         if (config.showSearchBar) AppFilter.search(apps, query) else apps
+    }
+
+    // Resolved against the visible, unsearched list rather than trusted from
+    // Prefs: a hidden, blocked or uninstalled entry simply never renders, so
+    // the dock can never reach an app the current mode and lists keep away.
+    val dockApps = remember(apps, config.dockPackages) {
+        DockList.resolve(config.dockPackages, apps)
     }
 
     Surface(
@@ -117,6 +145,11 @@ fun HomeScreen(
                 }
             }
 
+            if (config.dockEnabled && dockApps.isNotEmpty()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                AppDock(apps = dockApps, config = config, onLaunch = onLaunch)
+            }
+
             TextButton(
                 onClick = onOpenSettings,
                 modifier = Modifier
@@ -125,6 +158,41 @@ fun HomeScreen(
             ) {
                 Text(text = "Settings")
             }
+        }
+    }
+}
+
+/**
+ * Quick-access row. Text only, like the list, and the whole label is the tap
+ * target. Cells are sized to their label rather than sharing the width five
+ * ways: equal cells cut "Google Maps" to "Googl…" on a 360dp phone and to a
+ * single letter at a large system font. When the labels do not fit on one line
+ * the row wraps to a second one instead of truncating any of them.
+ */
+@Composable
+private fun AppDock(
+    apps: List<LaunchableApp>,
+    config: HomeUiConfig,
+    onLaunch: (LaunchableApp) -> Unit,
+) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+    ) {
+        for (app in apps) {
+            Text(
+                text = app.label,
+                style = dockLabelStyle(config.textSize),
+                color = MaterialTheme.colorScheme.onBackground,
+                // A single name wider than the whole screen is the only thing
+                // left to cut.
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .clickable { onLaunch(app) }
+                    .padding(horizontal = 8.dp, vertical = 14.dp),
+            )
         }
     }
 }
@@ -175,6 +243,19 @@ private fun AppRow(
             )
         }
     }
+}
+
+/**
+ * One step below [labelStyle]. The dock follows the App name size setting, so a
+ * reader who sized the list up does not get a dock that stayed small, but it
+ * trails the list by a step: five names across at the list's own size would
+ * wrap the dock to three rows and eat the list it sits under.
+ */
+@Composable
+private fun dockLabelStyle(size: TextSize): TextStyle = when (size) {
+    TextSize.SMALL -> MaterialTheme.typography.bodyLarge
+    TextSize.MEDIUM -> MaterialTheme.typography.titleMedium
+    TextSize.LARGE -> MaterialTheme.typography.titleLarge
 }
 
 @Composable

@@ -32,15 +32,36 @@ object AppFilter {
             .thenBy(LaunchableApp::packageName)
 
     /**
-     * Substring match on both the visible name and the package id, so the
-     * settings search box finds "com.whatsapp" as well as "WhatsApp".
+     * Substring match on the display name, case-insensitively. Package ids are
+     * ignored unless [matchPackageNames] is set: people type what they see on
+     * screen, and "com.google.android.apps.messaging" matching "me" buries the
+     * app they meant.
+     *
+     * Ranked in three tiers, each in [LABEL_ORDER]: labels that start with the
+     * query, other label matches, then package-only matches. A prefix hit is
+     * what someone typing a name is almost always after, so "me" lists
+     * "Messages" above "Google Home".
      */
-    fun search(apps: List<LaunchableApp>, query: String): List<LaunchableApp> {
+    fun search(
+        apps: List<LaunchableApp>,
+        query: String,
+        matchPackageNames: Boolean = false,
+    ): List<LaunchableApp> {
         val needle = query.trim()
         if (needle.isEmpty()) return apps
-        return apps.filter {
-            it.label.contains(needle, ignoreCase = true) ||
-                it.packageName.contains(needle, ignoreCase = true)
+        val prefixMatches = ArrayList<LaunchableApp>()
+        val labelMatches = ArrayList<LaunchableApp>()
+        val packageMatches = ArrayList<LaunchableApp>()
+        for (app in apps) {
+            when {
+                app.label.startsWith(needle, ignoreCase = true) -> prefixMatches += app
+                app.label.contains(needle, ignoreCase = true) -> labelMatches += app
+                matchPackageNames && app.packageName.contains(needle, ignoreCase = true) ->
+                    packageMatches += app
+            }
         }
+        return prefixMatches.sortedWith(LABEL_ORDER) +
+            labelMatches.sortedWith(LABEL_ORDER) +
+            packageMatches.sortedWith(LABEL_ORDER)
     }
 }
