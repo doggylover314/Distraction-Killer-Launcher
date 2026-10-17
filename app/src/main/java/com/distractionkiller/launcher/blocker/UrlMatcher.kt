@@ -53,7 +53,10 @@ object UrlMatcher {
         // A host needs a dot (or be localhost / an IPv6 literal); "reddit" alone
         // is a search, not a navigation.
         if (!host.contains('.') && host != "localhost" && !host.startsWith("[")) return null
-        if (host.any { !(it.isLetterOrDigit() || it == '.' || it == '-' || it == '[' || it == ']' || it == ':') }) return null
+        // '_' is not legal in a hostname, but browsers resolve and display it
+        // ("my_site.example.com"), so rejecting it would let such a page past
+        // both the blocklist and the allowlist unjudged.
+        if (host.any { !(it.isLetterOrDigit() || it == '.' || it == '-' || it == '_' || it == '[' || it == ']' || it == ':') }) return null
         // The last label must be a real TLD: letters, at least two. That
         // rejects "4.7", "12.99" and "v1.2.3", which ordinary apps show all
         // the time. Dotted-quad IPv4 literals are the one numeric exception.

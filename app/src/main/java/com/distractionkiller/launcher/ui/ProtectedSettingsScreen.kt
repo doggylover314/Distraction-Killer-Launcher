@@ -87,7 +87,9 @@ fun ProtectedSettingsScreen(
     var customSites by remember(websiteMode) { mutableStateOf(prefs.websiteListFor(websiteMode)) }
     var enabledPresets by remember { mutableStateOf(prefs.enabledWebsitePresets) }
     val presets = remember { WebsitePresets(context) }
-    var catalog by remember { mutableStateOf<List<WebsitePreset>>(emptyList()) }
+    // Null until the asset read finishes, so "still loading" is not shown as
+    // "nothing bundled".
+    var catalog by remember { mutableStateOf<List<WebsitePreset>?>(null) }
     var presetCounts by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     LaunchedEffect(Unit) {
         // Asset reads, off the main thread: the catalog first so the rows
@@ -101,7 +103,6 @@ fun ProtectedSettingsScreen(
     var lockSettings by remember { mutableStateOf(prefs.lockSystemSettings) }
     var keywords by remember { mutableStateOf(prefs.settingsLockKeywords) }
     var unlockedUntil by remember { mutableLongStateOf(prefs.settingsUnlockUntilElapsed) }
-    var unlockGrantedAt by remember { mutableLongStateOf(prefs.settingsUnlockGrantedAtElapsed) }
 
     // Ticks while a window is open so the "about N min" line counts down
     // and disappears when the lock re-engages, instead of freezing.
@@ -128,7 +129,6 @@ fun ProtectedSettingsScreen(
     fun grantUnlockWindow() {
         val now = SystemClock.elapsedRealtime()
         prefs.grantSettingsUnlock(now, SETTINGS_UNLOCK_MINUTES * 60_000L)
-        unlockGrantedAt = now
         unlockedUntil = now + SETTINGS_UNLOCK_MINUTES * 60_000L
     }
 
@@ -230,7 +230,9 @@ fun ProtectedSettingsScreen(
             }
             item {
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                    if (unlockGrantedAt <= nowElapsed && nowElapsed < unlockedUntil) {
+                    // The same test the service applies, boot check included, so a
+                    // window left over from before a reboot is not shown as open.
+                    if (nowElapsed < unlockedUntil && prefs.isSettingsUnlocked(nowElapsed)) {
                         val minutesLeft = ((unlockedUntil - nowElapsed) / 60_000L) + 1
                         InfoText("Android Settings changes allowed for about $minutesLeft min.", highlighted = true)
                     }
@@ -311,8 +313,10 @@ fun ProtectedSettingsScreen(
                     },
                 )
             }
-            val modePresets = catalog.filter { it.appliesTo == websiteMode }
-            if (modePresets.isEmpty()) {
+            val modePresets = catalog.orEmpty().filter { it.appliesTo == websiteMode }
+            if (catalog == null) {
+                item { InfoText("Loading presets…") }
+            } else if (modePresets.isEmpty()) {
                 item { InfoText("No presets are bundled for this mode.") }
             }
             items(items = modePresets, key = { "preset-" + it.id }) { preset ->
@@ -327,7 +331,7 @@ fun ProtectedSettingsScreen(
                     },
                 )
             }
-            val thirdParty = catalog.filter { it.source.startsWith("http") }
+            val thirdParty = catalog.orEmpty().filter { it.source.startsWith("http") }
             if (thirdParty.isNotEmpty()) {
                 item {
                     Text(

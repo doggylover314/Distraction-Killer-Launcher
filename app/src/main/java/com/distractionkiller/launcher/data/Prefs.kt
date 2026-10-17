@@ -2,6 +2,7 @@ package com.distractionkiller.launcher.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.provider.Settings
 import androidx.core.content.edit
 import com.distractionkiller.launcher.blocker.SettingsLockDetector
 import com.distractionkiller.launcher.blocker.WebsiteMode
@@ -17,8 +18,10 @@ import com.distractionkiller.launcher.weather.WeatherSnapshot
  */
 class Prefs(context: Context) {
 
+    private val appContext = context.applicationContext
+
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
 
     // ======================================================== protected tier
 
@@ -129,11 +132,18 @@ class Prefs(context: Context) {
         prefs.edit {
             putLong(KEY_SETTINGS_UNLOCK_GRANTED, nowElapsed)
             putLong(KEY_SETTINGS_UNLOCKED_UNTIL, nowElapsed + durationMillis)
+            putInt(KEY_SETTINGS_UNLOCK_BOOT, BootCount.current(appContext))
         }
     }
 
+    /**
+     * Elapsed time restarts at zero on every boot, so on its own a window
+     * granted at minute 30 of one boot would open again at minute 30 of the
+     * next. The boot it was granted in is stored with it and must match.
+     */
     fun isSettingsUnlocked(nowElapsed: Long): Boolean =
-        SettingsLockDetector.isUnlocked(settingsUnlockGrantedAtElapsed, settingsUnlockUntilElapsed, nowElapsed)
+        prefs.getInt(KEY_SETTINGS_UNLOCK_BOOT, BootCount.UNKNOWN) == BootCount.current(appContext) &&
+            SettingsLockDetector.isUnlocked(settingsUnlockGrantedAtElapsed, settingsUnlockUntilElapsed, nowElapsed)
 
     // ------------------------------------------------------------- password
 
@@ -322,6 +332,7 @@ class Prefs(context: Context) {
                 KEY_WEBSITE_MODE, KEY_WEBSITE_BLOCKLIST, KEY_WEBSITE_ALLOWLIST, KEY_WEBSITE_PRESETS,
                 KEY_SITE_BLOCKING, KEY_ENFORCE_APPS, KEY_LOCK_SETTINGS,
                 KEY_LOCK_KEYWORDS, KEY_SETTINGS_UNLOCKED_UNTIL, KEY_SETTINGS_UNLOCK_GRANTED,
+                KEY_SETTINGS_UNLOCK_BOOT,
             )
 
         private const val FILE_NAME = "distraction_killer_prefs"
@@ -339,6 +350,7 @@ class Prefs(context: Context) {
         private const val KEY_LOCK_KEYWORDS = "settings_lock_keywords"
         private const val KEY_SETTINGS_UNLOCKED_UNTIL = "settings_unlocked_until_elapsed"
         private const val KEY_SETTINGS_UNLOCK_GRANTED = "settings_unlock_granted_elapsed"
+        private const val KEY_SETTINGS_UNLOCK_BOOT = "settings_unlock_boot_count"
         private const val KEY_PASSWORD_HASH = "password_hash"
         private const val KEY_PASSWORD_SALT = "password_salt"
         private const val KEY_THEME = "theme_mode"
@@ -365,4 +377,19 @@ class Prefs(context: Context) {
         private const val KEY_WEATHER_IS_DAY = "weather_is_day"
         private const val KEY_WEATHER_FETCHED_AT = "weather_fetched_at"
     }
+}
+
+/**
+ * Which boot of the phone this is. Fixed for the life of a process, so it is
+ * read once. [UNKNOWN] when the platform does not report it; the unlock window
+ * then falls back to elapsed time alone, as before.
+ */
+private object BootCount {
+    const val UNKNOWN = -1
+
+    @Volatile private var cached: Int? = null
+
+    fun current(context: Context): Int = cached ?: runCatching {
+        Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, UNKNOWN)
+    }.getOrDefault(UNKNOWN).also { cached = it }
 }

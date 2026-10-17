@@ -25,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The part that makes the launcher hard to get around. Runs only while the user
@@ -71,8 +72,17 @@ class EnforcementService : AccessibilityService() {
     @Volatile private var browsers: Set<String> = emptySet()
     @Volatile private var homeApps: Set<String> = emptySet()
 
-    /** Derived from prefs + [launchable]; null means "recompute on next use". */
-    @Volatile private var visibleCache: Set<String>? = null
+    /**
+     * Derived from prefs + one [launchable] snapshot; null means "recompute on
+     * next use". Tagged with the snapshot it came from, because [reload] swaps
+     * [launchable] on an IO thread: a set computed from the old list while the
+     * swap happened must not be served against the new one.
+     */
+    private class VisibleSet(val source: Set<String>, val visible: Set<String>)
+    @Volatile private var visibleCache: VisibleSet? = null
+
+    /** Ticket of the newest [reload]; an older one finishing later must not overwrite it. */
+    private val reloadGeneration = AtomicInteger()
 
     /** Union of every enabled preset, for the website mode it was loaded under. */
     private val presetStore = PresetStore()
@@ -201,13 +211,19 @@ class EnforcementService : AccessibilityService() {
         }
     }
 
-    private fun shouldSendHome(packageName: String): Boolean = AppEnforcement.shouldSendHome(
-        packageName = packageName,
-        enforcementEnabled = prefs.enforceAppsSystemWide,
-        launchablePackages = launchable,
-        visiblePackages = visiblePackages(),
-        exemptPackages = exempt,
-    )
+    private fun shouldSendHome(packageName: String): Boolean {
+        // One snapshot for both sets. Read twice, a reload in between could
+        // pair a newly installed app (in the new list) with a visible set
+        // built from the old one, and bounce an app the user never hid.
+        val launchableNow = launchable
+        return AppEnforcement.shouldSendHome(
+            packageName = packageName,
+            enforcementEnabled = prefs.enforceAppsSystemWide,
+            launchablePackages = launchableNow,
+            visiblePackages = visiblePackages(launchableNow),
+            exemptPackages = exempt,
+        )
+    }
 
     /** Caller has already established [shouldSendHome]. Returns false if the app turned out to be the new home. */
     private fun bounceHiddenApp(packageName: String): Boolean {
@@ -528,9 +544,9 @@ class EnforcementService : AccessibilityService() {
         if (stuck) goHome() else goBack()
     }
 
-    private fun visiblePackages(): Set<String> {
-        visibleCache?.let { return it }
-        val apps = launchable.map { LaunchableApp(it, it) }
+    private fun visiblePackages(source: Set<String>): Set<String> {
+        visibleCache?.takeIf { it.source === source }?.let { return it.visible }
+        val apps = source.map { LaunchableApp(it, it) }
         val visible = AppFilter.visibleApps(
             installed = apps,
             mode = prefs.mode,
@@ -538,7 +554,7 @@ class EnforcementService : AccessibilityService() {
             blocklist = prefs.blocklist,
             selfPackage = packageName,
         ).mapTo(HashSet()) { it.packageName }
-        visibleCache = visible
+        visibleCache = VisibleSet(source, visible)
         return visible
     }
 
@@ -560,6 +576,7 @@ class EnforcementService : AccessibilityService() {
     }
 
     private fun reload() {
+        val ticket = reloadGeneration.incrementAndGet()
         scope.launch {
             runCatching {
                 val allLaunchable = appRepository.launchablePackagesAllProfiles()
@@ -572,11 +589,19 @@ class EnforcementService : AccessibilityService() {
                         Log.w(TAG, "Another home app is the default: $other")
                         exemptions.add(other)
                     }
-                launchable = allLaunchable
-                homeApps = appRepository.homeAppPackages()
-                exempt = exemptions
-                browsers = appRepository.browserPackages()
-                visibleCache = null
+                val homes = appRepository.homeAppPackages()
+                val browserSet = appRepository.browserPackages()
+                // Package broadcasts come in bursts (an update is REMOVED,
+                // ADDED and CHANGED), so several reloads can overlap. Only the
+                // newest may publish; an older one can predate the change.
+                synchronized(reloadGeneration) {
+                    if (ticket != reloadGeneration.get()) return@runCatching
+                    launchable = allLaunchable
+                    homeApps = homes
+                    exempt = exemptions
+                    browsers = browserSet
+                    visibleCache = null
+                }
             }.onFailure { Log.w(TAG, "Reload failed", it) }
         }
     }

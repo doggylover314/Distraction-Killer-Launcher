@@ -156,6 +156,14 @@ class UrlMatcherTest {
     }
 
     @Test
+    fun `hosts with an underscore are still hosts`() {
+        // Browsers load these, so rejecting them let the page past both modes.
+        assertEquals("my_site.example.com", UrlMatcher.hostOf("https://my_site.example.com/page"))
+        assertEquals("a_b.reddit.com", UrlMatcher.blockedHost("a_b.reddit.com/r/all", setOf("reddit.com")))
+        assertTrue(SiteRules.shouldBlock(UrlMatcher.hostOf("x_y.example.org"), WebsiteMode.ALLOWLIST, setOf("wikipedia.org"), CompactDomainSet.EMPTY))
+    }
+
+    @Test
     fun `end to end from address bar text to verdict`() {
         val patterns = setOf("reddit.com")
         assertEquals("www.reddit.com", UrlMatcher.blockedHost("https://www.reddit.com/", patterns))
