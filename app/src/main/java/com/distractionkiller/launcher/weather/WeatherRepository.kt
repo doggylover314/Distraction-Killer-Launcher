@@ -46,7 +46,9 @@ class WeatherRepository(context: Context) {
         if (!forceRefresh && cached != null && cached.isFresh(System.currentTimeMillis(), CACHE_MAX_AGE_MILLIS)) {
             return cached
         }
-        if (!hasLocationPermission()) return cached
+        // Without the permission there will be no new reading, so an old one
+        // would be shown as current indefinitely. Say there is none instead.
+        if (!hasLocationPermission()) return null
 
         val location = withTimeoutOrNull(LOCATION_TIMEOUT_MILLIS) { currentLocation() } ?: return cached
         val fetched = withContext(Dispatchers.IO) { fetch(location.latitude, location.longitude) }

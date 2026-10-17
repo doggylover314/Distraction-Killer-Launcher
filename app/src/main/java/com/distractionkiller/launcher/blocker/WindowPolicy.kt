@@ -211,6 +211,22 @@ internal object InspectionPolicy {
     }
 
     /**
+     * How long until a look that [shouldInspect] just turned down would be
+     * allowed, for the windows the user navigates (browsers and lockable
+     * system screens), or null when no follow-up look is owed. Without one,
+     * the last content change of a burst that lands inside the throttle (the
+     * address bar settling on the final URL, a Settings page that changes once
+     * and then sits still) is never judged if nothing else happens after it.
+     * Ordinary windows are left to their own slower cadence.
+     */
+    fun trailingDelay(kind: WindowKind, stateChange: Boolean, known: WindowMemo.Entry?, now: Long, lastFastAt: Long): Long? {
+        if (stateChange || kind == WindowKind.OTHER) return null
+        if (kind != WindowKind.LOCKABLE && known?.verdict == WindowVerdict.NOT_INSPECTABLE) return null
+        val wait = FAST_INTERVAL_MS - (now - lastFastAt)
+        return if (wait > 0) wait else null
+    }
+
+    /**
      * What a walk of an ordinary window may teach the memo, or null to teach it
      * nothing. A page that was seen stays true however the walk ended. "No page"
      * is only true if the walk read the whole window: when the node or depth

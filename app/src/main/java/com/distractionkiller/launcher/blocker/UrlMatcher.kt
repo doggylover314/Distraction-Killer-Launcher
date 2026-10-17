@@ -32,11 +32,15 @@ object UrlMatcher {
             if (text.isEmpty()) return null
         }
 
-        val schemeEnd = text.indexOf("://")
+        // A scheme only counts at the very start: "://" later in the text is
+        // part of the path or query ("web.archive.org/web/2024/https://x.com/"),
+        // and reading everything before it as a scheme loses the real host.
+        val schemeEnd = text.indexOf("://").takeIf { it > 0 && SCHEME.matches(text.substring(0, it)) } ?: -1
         // Without a scheme, "name@host" is far more likely an e-mail address
         // shown somewhere in an app than a URL with credentials. Treating it
-        // as a host would let a contact card trigger a block.
-        if (schemeEnd < 0 && '@' in text) return null
+        // as a host would let a contact card trigger a block. Only the part
+        // before the path counts: "youtube.com/@channel" is a page.
+        if (schemeEnd < 0 && '@' in text.substringBefore('/').substringBefore('?').substringBefore('#')) return null
         if (schemeEnd >= 0) {
             val scheme = text.substring(0, schemeEnd).lowercase(Locale.ROOT)
             if (scheme != "http" && scheme != "https") return null
@@ -83,6 +87,9 @@ object UrlMatcher {
         if (text.isEmpty()) return true
         return INTERNAL_PREFIXES.any { text.startsWith(it) }
     }
+
+    /** RFC 3986 scheme syntax. */
+    private val SCHEME = Regex("[A-Za-z][A-Za-z0-9+.-]*")
 
     private val INTERNAL_PREFIXES = listOf(
         "about:blank",

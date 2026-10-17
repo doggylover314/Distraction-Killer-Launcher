@@ -18,6 +18,9 @@ internal object SiteVerdict {
      *   bar has passed: the host of a plain-text candidate outside the web
      *   content, such as a preview sheet showing another page. Lazy because
      *   answering it can need a walk the caller may throttle.
+     * @param presetsPending the allowlist presets the user switched on have not
+     *   loaded yet. Empty lists then mean "not known yet", and allowlist mode
+     *   fails closed instead of reading them as "nothing configured".
      */
     inline fun judge(
         view: UrlCandidate?,
@@ -27,10 +30,13 @@ internal object SiteVerdict {
         presets: CompactDomainSet,
         webViewShown: () -> Boolean,
         plainHost: () -> String?,
+        presetsPending: Boolean = false,
     ): SiteBlock? {
         // Blocklist with nothing on it is a no-op. Allowlist with nothing on
-        // it would block the whole web, which is only ever a mistake.
-        if (custom.isEmpty() && presets.isEmpty()) return null
+        // it would block the whole web, which is only ever a mistake, unless
+        // the list is only empty because its presets are still loading.
+        val allowlistPending = presetsPending && mode == WebsiteMode.ALLOWLIST
+        if (custom.isEmpty() && presets.isEmpty() && !allowlistPending) return null
 
         if (view == null) {
             // A browser window with a page but no address bar at all: an

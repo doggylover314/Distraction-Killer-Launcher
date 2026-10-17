@@ -168,6 +168,8 @@ private fun SettingsRoute(
             prefs = prefs,
             apps = apps,
             isLoading = isLoading,
+            loadFailed = loadFailed,
+            onRetryLoad = { loadAttempt++ },
             onDone = onFinish,
         )
     }

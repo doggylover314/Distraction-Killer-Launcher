@@ -53,7 +53,7 @@ To check nothing is broken first:
 ./gradlew test lint
 ```
 
-Behind that sit 85 JVM unit tests: password hashing, the allowlist and
+Behind that sit 292 JVM unit tests: password hashing, the allowlist and
 blocklist rules, the search box, the launch counter, weather parsing, the URL
 matcher, the site rules, the app-enforcement rule, the Settings-screen detector
 and its unlock window, plus a pass over the bundled preset files themselves.

@@ -68,6 +68,8 @@ fun ProtectedSettingsScreen(
     prefs: Prefs,
     apps: List<LaunchableApp>,
     isLoading: Boolean,
+    loadFailed: Boolean,
+    onRetryLoad: () -> Unit,
     onDone: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -433,7 +435,11 @@ fun ProtectedSettingsScreen(
                 )
             }
 
-            if (isLoading && apps.isEmpty()) {
+            if (loadFailed && apps.isEmpty()) {
+                // Not "no matches": the query itself failed.
+                item { InfoText("Could not read the installed apps. Your lists are kept.") }
+                item { TextButton(onClick = onRetryLoad) { Text("Try again") } }
+            } else if (isLoading && apps.isEmpty()) {
                 item { InfoText("Loading installed apps…") }
             } else if (visibleApps.isEmpty()) {
                 item { InfoText("No apps match \"$query\".") }

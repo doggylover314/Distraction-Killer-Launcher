@@ -253,4 +253,20 @@ class WindowPolicyTest {
         assertEquals(0, memo.size)
         assertNull(memo.find(-1, "p"))
     }
+
+    @Test
+    fun `a throttled look at a browser or settings screen is owed once the interval passes`() {
+        val now = 10_000L
+        assertEquals(200L, InspectionPolicy.trailingDelay(WindowKind.BROWSER, false, null, now, lastFastAt = now - 100))
+        assertEquals(1L, InspectionPolicy.trailingDelay(WindowKind.LOCKABLE, false, null, now, lastFastAt = now - 299))
+        // Nothing owed once a look is already allowed, on a state change, or
+        // for ordinary windows, which keep their own cadence.
+        assertNull(InspectionPolicy.trailingDelay(WindowKind.BROWSER, false, null, now, lastFastAt = now - 300))
+        assertNull(InspectionPolicy.trailingDelay(WindowKind.BROWSER, true, null, now, lastFastAt = now - 100))
+        assertNull(InspectionPolicy.trailingDelay(WindowKind.OTHER, false, null, now, lastFastAt = now - 100))
+        // A browser's keyboard or overlay window is never looked at.
+        assertNull(InspectionPolicy.trailingDelay(WindowKind.BROWSER, false, entry(WindowVerdict.NOT_INSPECTABLE), now, lastFastAt = now - 100))
+        // The lock ignores that verdict, as shouldInspect does.
+        assertNotNull(InspectionPolicy.trailingDelay(WindowKind.LOCKABLE, false, entry(WindowVerdict.NOT_INSPECTABLE), now, lastFastAt = now - 100))
+    }
 }

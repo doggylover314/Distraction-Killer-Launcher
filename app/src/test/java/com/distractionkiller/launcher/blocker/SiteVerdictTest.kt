@@ -29,11 +29,24 @@ class SiteVerdictTest {
         plainHost: String? = null,
         custom: Set<String> = this.custom,
         presets: CompactDomainSet = this.presets,
+        presetsPending: Boolean = false,
     ): SiteBlock? = SiteVerdict.judge(
         view, isBrowser, mode, custom, presets,
         webViewShown = { webViewAsked++; webView },
         plainHost = { plainAsked++; plainHost },
+        presetsPending = presetsPending,
     )
+
+    @Test
+    fun `allowlist fails closed while its presets are still loading`() {
+        val none = emptySet<String>()
+        assertNotNull(judge(bar("https://x.example/"), WebsiteMode.ALLOWLIST, custom = none, presets = CompactDomainSet.EMPTY, presetsPending = true))
+        assertNotNull(judge(null, WebsiteMode.ALLOWLIST, webView = true, custom = none, presets = CompactDomainSet.EMPTY, presetsPending = true))
+        // The browser's own new-tab page is still let through.
+        assertNull(judge(bar("chrome://newtab/"), WebsiteMode.ALLOWLIST, custom = none, presets = CompactDomainSet.EMPTY, presetsPending = true))
+        // Blocklist mode has nothing to fail closed on.
+        assertNull(judge(bar("https://x.example/"), WebsiteMode.BLOCKLIST, custom = none, presets = CompactDomainSet.EMPTY, presetsPending = true))
+    }
 
     // --------------------------------------------------------- blocklist mode
 

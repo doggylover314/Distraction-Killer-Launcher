@@ -22,6 +22,21 @@ class PresetStoreTest {
     }
 
     @Test
+    fun `settled only once the newest load has landed for that mode`() {
+        val store = PresetStore()
+        val first = store.beginLoad()
+        assertFalse(store.isSettledFor(WebsiteMode.ALLOWLIST))
+        store.publish(first, WebsiteMode.ALLOWLIST, allowedByPreset)
+        assertTrue(store.isSettledFor(WebsiteMode.ALLOWLIST))
+        assertFalse(store.isSettledFor(WebsiteMode.BLOCKLIST))
+        // A newer reload starts: pending again until it lands.
+        val second = store.beginLoad()
+        assertFalse(store.isSettledFor(WebsiteMode.ALLOWLIST))
+        store.publish(second, WebsiteMode.ALLOWLIST, allowedByPreset)
+        assertTrue(store.isSettledFor(WebsiteMode.ALLOWLIST))
+    }
+
+    @Test
     fun `a set is served only under the mode it was loaded for`() {
         val store = PresetStore()
         assertTrue(store.publish(store.beginLoad(), WebsiteMode.BLOCKLIST, adult))

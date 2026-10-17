@@ -30,6 +30,9 @@ internal class PresetStore {
     /** Makes the check in [publish] and the assignment one step, so an older load cannot slip in between. */
     private val publishLock = Any()
 
+    /** Ticket of the load whose set is in [loaded]; 0 before any. */
+    @Volatile private var publishedTicket = 0
+
     /** Starts a reload and returns the ticket its result must present to [publish]. */
     fun beginLoad(): Int = generation.incrementAndGet()
 
@@ -38,9 +41,18 @@ internal class PresetStore {
         synchronized(publishLock) {
             if (ticket != generation.get()) return false
             loaded = Loaded(mode, domains)
+            publishedTicket = ticket
             return true
         }
     }
+
+    /**
+     * True once the newest load has landed, and for [mode]. Until then an empty
+     * [domainsFor] means "not known yet", not "nothing enabled", and the caller
+     * must not read it as the second.
+     */
+    fun isSettledFor(mode: WebsiteMode): Boolean =
+        publishedTicket == generation.get() && loaded.mode == mode
 
     /**
      * The presets to use under [mode]. A set loaded for the other mode yields

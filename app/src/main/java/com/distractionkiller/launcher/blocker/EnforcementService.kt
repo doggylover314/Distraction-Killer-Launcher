@@ -247,7 +247,13 @@ class EnforcementService : AccessibilityService() {
     // --------------------------------------------- 2. sites and 3. lock
 
     /** What the website rules are, read once per inspection that gets as far as needing them. */
-    private class WebRules(val mode: WebsiteMode, val custom: Set<String>, val presets: CompactDomainSet)
+    private class WebRules(
+        val mode: WebsiteMode,
+        val custom: Set<String>,
+        val presets: CompactDomainSet,
+        /** Allowlist presets are switched on but not loaded yet; see [SiteVerdict.judge]. */
+        val presetsPending: Boolean = false,
+    )
 
     /** Null when there is nothing to enforce, in which case no node is ever fetched for it. */
     private fun currentWebRules(): WebRules? {
@@ -255,8 +261,23 @@ class EnforcementService : AccessibilityService() {
         val mode = prefs.websiteMode
         val custom = prefs.websiteListFor(mode)
         val preset = presetStore.domainsFor(mode)
-        if (custom.isEmpty() && preset.isEmpty()) return null
+        if (custom.isEmpty() && preset.isEmpty()) {
+            // Empty because the presets are still loading (every connect, every
+            // mode switch) is not empty because nothing is configured. In
+            // allowlist mode the first must fail closed, or the whole web is
+            // open until the load lands.
+            if (mode == WebsiteMode.ALLOWLIST && !presetStore.isSettledFor(mode) && allowlistPresetsEnabled()) {
+                return WebRules(mode, custom, preset, presetsPending = true)
+            }
+            return null
+        }
         return WebRules(mode, custom, preset)
+    }
+
+    /** Only asked while a load is pending. The catalog is a small TSV, cached after the first read. */
+    private fun allowlistPresetsEnabled(): Boolean {
+        val enabled = prefs.enabledWebsitePresets
+        return presets.presetsFor(WebsiteMode.ALLOWLIST).any { it.id in enabled }
     }
 
     /**
@@ -271,7 +292,7 @@ class EnforcementService : AccessibilityService() {
      * Everything that can say "nothing to do" is tested before the first node is
      * requested, because the window root itself is already a binder call.
      */
-    private fun inspectWindow(packageName: String, windowId: Int, stateChange: Boolean) {
+    private fun inspectWindow(packageName: String, windowId: Int, stateChange: Boolean, trailing: Boolean = false) {
         if (packageName in NEVER_INSPECT) return
         val kind = when {
             SettingsLockDetector.isLockablePackage(packageName) -> WindowKind.LOCKABLE
@@ -281,7 +302,15 @@ class EnforcementService : AccessibilityService() {
 
         val now = SystemClock.uptimeMillis()
         val known = windowMemo.find(windowId, packageName)
-        if (!InspectionPolicy.shouldInspect(kind, stateChange, known, now, lastFastInspectionAt, lastSlowInspectionAt)) return
+        if (!InspectionPolicy.shouldInspect(kind, stateChange, known, now, lastFastInspectionAt, lastSlowInspectionAt)) {
+            // A trailing look never schedules another: if it was turned down, a
+            // look has happened since the event that asked for it.
+            if (!trailing) {
+                InspectionPolicy.trailingDelay(kind, stateChange, known, now, lastFastInspectionAt)
+                    ?.let { scheduleTrailingInspection(packageName, windowId, it) }
+            }
+            return
+        }
 
         val lockActive = kind == WindowKind.LOCKABLE && lockStandsGuard(packageName)
         val rules = if (kind == WindowKind.LOCKABLE) null else currentWebRules()
@@ -331,6 +360,22 @@ class EnforcementService : AccessibilityService() {
         } finally {
             roots.forEach { it.recycleCompat() }
         }
+    }
+
+    private var trailingPackage: String? = null
+    private var trailingWindowId = -1
+    private val trailingInspection = Runnable {
+        val target = trailingPackage ?: return@Runnable
+        trailingPackage = null
+        runCatching { inspectWindow(target, trailingWindowId, stateChange = false, trailing = true) }
+    }
+
+    /** At most one pending; a later throttled event retargets it to its own window. */
+    private fun scheduleTrailingInspection(packageName: String, windowId: Int, delayMs: Long) {
+        val pending = trailingPackage != null
+        trailingPackage = packageName
+        trailingWindowId = windowId
+        if (!pending) handler.postDelayed(trailingInspection, delayMs)
     }
 
     /**
@@ -427,6 +472,7 @@ class EnforcementService : AccessibilityService() {
             mode = rules.mode,
             custom = rules.custom,
             presets = rules.presets,
+            presetsPending = rules.presetsPending,
             webViewShown = { lazyScan.get().webViewSeen },
             plainHost = {
                 // The sweep needs the whole tree. Answer from a walk that has
@@ -602,6 +648,10 @@ class EnforcementService : AccessibilityService() {
                     browsers = browserSet
                     visibleCache = null
                 }
+                // Only window changes are checked against the app lists, so an
+                // app that was already in front when the service connected, or
+                // opened before this first load landed, would otherwise stay.
+                handler.post(verifyForeground)
             }.onFailure { Log.w(TAG, "Reload failed", it) }
         }
     }

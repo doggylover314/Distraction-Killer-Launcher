@@ -144,11 +144,17 @@ private fun HomeRoute(
     // list (or a loading hint) for a frame before correcting itself.
     val warmApps = remember(refreshKey) { warmVisibleApps(prefs, context.packageName) }
 
-    // What the cold path last produced, or last saw warm. It stays on screen
-    // while a stale cache reloads, and after a reload fails.
-    var lastApps by remember { mutableStateOf(warmApps ?: emptyList<LaunchableApp>()) }
+    // The installed list the cold path last produced, or last saw warm. It
+    // stands in while a stale cache reloads, and after a reload fails. Kept
+    // unfiltered and filtered here with the current preferences: a list
+    // filtered before a visit to Settings would still show, and launch, an app
+    // that was hidden there.
+    var lastInstalled by remember { mutableStateOf(InstalledApps.cached() ?: emptyList<LaunchableApp>()) }
+    val fallbackApps = remember(refreshKey, lastInstalled) {
+        runCatching { visibleApps(lastInstalled, prefs, context.packageName) }.getOrDefault(emptyList())
+    }
     var isLoading by remember { mutableStateOf(warmApps == null) }
-    val apps = warmApps ?: lastApps
+    val apps = warmApps ?: fallbackApps
     var weather by remember { mutableStateOf(prefs.cachedWeather) }
     var launchCounter by remember(refreshKey) { mutableStateOf(prefs.launchCounter) }
 
@@ -169,9 +175,9 @@ private fun HomeRoute(
 
     LaunchedEffect(refreshKey) {
         if (warmApps != null) {
-            // The screen already shows warmApps; this only remembers them as
-            // the fallback for a later failed reload.
-            lastApps = warmApps
+            // The screen already shows warmApps; this only remembers the list
+            // they came from as the fallback for a later failed reload.
+            InstalledApps.cached()?.let { lastInstalled = it }
             isLoading = false
             return@LaunchedEffect
         }
@@ -182,16 +188,19 @@ private fun HomeRoute(
         // only way out of the phone down with it. On failure the previous list
         // stays on screen and the next resume tries again.
         withContext(Dispatchers.IO) {
-            runCatching {
-                // First run only: work out sensible starter apps on this device.
-                if (!prefs.hasSeededDefaults) {
+            // First run only: work out sensible starter apps on this device.
+            // Its own runCatching: a lookup that throws here must not also
+            // keep the app list from loading. It is simply tried again on the
+            // next cold load.
+            if (!prefs.hasSeededDefaults) {
+                runCatching {
                     prefs.allowlist = appRepository.defaultAllowlist()
                     prefs.hasSeededDefaults = true
-                }
-                InstalledApps.load(appRepository)
+                }.onFailure { error -> Log.w(TAG, "Could not work out the starter apps", error) }
             }
+            runCatching { InstalledApps.load(appRepository) }
         }
-            .onSuccess { installed -> lastApps = visibleApps(installed, prefs, context.packageName) }
+            .onSuccess { installed -> lastInstalled = installed }
             .onFailure { error -> Log.w(TAG, "Could not read the installed app list", error) }
         isLoading = false
     }

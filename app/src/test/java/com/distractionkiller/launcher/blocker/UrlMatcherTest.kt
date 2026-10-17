@@ -156,6 +156,26 @@ class UrlMatcherTest {
     }
 
     @Test
+    fun `an at sign in the path does not make a page an e-mail address`() {
+        assertEquals("youtube.com", UrlMatcher.hostOf("youtube.com/@somechannel"))
+        assertEquals("medium.com", UrlMatcher.hostOf("medium.com/@writer/a-post"))
+        assertEquals("tiktok.com", UrlMatcher.blockedHost("tiktok.com/@user/video/1", setOf("tiktok.com")))
+        // The rule it narrows still holds.
+        assertNull(UrlMatcher.hostOf("someone@reddit.com"))
+        assertNull(UrlMatcher.hostOf("someone@reddit.com/path"))
+    }
+
+    @Test
+    fun `a url inside the path is not read as the scheme`() {
+        assertEquals("web.archive.org", UrlMatcher.hostOf("web.archive.org/web/2024/https://www.reddit.com/"))
+        assertEquals("x.com", UrlMatcher.hostOf("x.com/share?url=https://example.com"))
+        assertEquals("web.archive.org", UrlMatcher.hostOf("https://web.archive.org/web/2024/https://www.reddit.com/"))
+        // Real schemes still decide.
+        assertNull(UrlMatcher.hostOf("ftp://reddit.com"))
+        assertNull(UrlMatcher.hostOf("chrome://flags"))
+    }
+
+    @Test
     fun `hosts with an underscore are still hosts`() {
         // Browsers load these, so rejecting them let the page past both modes.
         assertEquals("my_site.example.com", UrlMatcher.hostOf("https://my_site.example.com/page"))
