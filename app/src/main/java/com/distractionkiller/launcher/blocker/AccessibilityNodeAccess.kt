@@ -33,8 +33,22 @@ internal class AccessibilityNodeAccess : NodeAccess<AccessibilityNodeInfo> {
 
     /** A WebView at least this tall counts as a page rather than an ad banner. */
     var minWebViewHeightPx = 0
+        private set
 
     private val bounds = Rect()
+
+    /**
+     * Sizes the large-WebView test for the window [root] belongs to (see
+     * [WebViewSize]). The bounds travelled with the parceled node, so this
+     * costs no binder call.
+     */
+    fun calibrateFor(root: AccessibilityNodeInfo, displayHeightPx: Int) {
+        val windowHeight = runCatching {
+            root.getBoundsInScreen(bounds)
+            bounds.height()
+        }.getOrDefault(0)
+        minWebViewHeightPx = WebViewSize.minHeightPx(windowHeight, displayHeightPx)
+    }
 
     override fun childCount(node: AccessibilityNodeInfo): Int = node.childCount
 

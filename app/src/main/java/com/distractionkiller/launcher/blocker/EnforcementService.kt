@@ -74,15 +74,8 @@ class EnforcementService : AccessibilityService() {
     /** Derived from prefs + [launchable]; null means "recompute on next use". */
     @Volatile private var visibleCache: Set<String>? = null
 
-    /** Union of every enabled preset for the current website mode. */
-    @Volatile private var presetDomains: CompactDomainSet = CompactDomainSet.EMPTY
-
-    /**
-     * Bumped on each reload request. Two quick toggles start two loads, and
-     * without this the slower, older one could finish last and put stale
-     * domains back.
-     */
-    @Volatile private var presetGeneration = 0
+    /** Union of every enabled preset, for the website mode it was loaded under. */
+    private val presetStore = PresetStore()
 
     private var lastHomeAt = 0L
     private var lastBackAt = 0L
@@ -99,8 +92,8 @@ class EnforcementService : AccessibilityService() {
     private val addressBarIds = AddressBarIds()
     private val nodeAccess = AccessibilityNodeAccess()
 
-    /** Set by [checkWebContent] when it walked a window: whether a page was found in it. */
-    private var scanSawWebView: Boolean? = null
+    /** Set by [LazyScan] when it walked a window: what that walk found, and whether it read everything. */
+    private var lastScan: UrlScan? = null
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in Prefs.ENFORCEMENT_KEYS) visibleCache = null
@@ -245,7 +238,7 @@ class EnforcementService : AccessibilityService() {
         if (!prefs.siteBlockingEnabled) return null
         val mode = prefs.websiteMode
         val custom = prefs.websiteListFor(mode)
-        val preset = presetDomains
+        val preset = presetStore.domainsFor(mode)
         if (custom.isEmpty() && preset.isEmpty()) return null
         return WebRules(mode, custom, preset)
     }
@@ -254,9 +247,10 @@ class EnforcementService : AccessibilityService() {
      * Decides whether a window is worth walking and how often; the rules are in
      * [InspectionPolicy]. In short: browsers and lockable system windows are
      * checked every [InspectionPolicy.FAST_INTERVAL_MS] because the user is
-     * navigating them; any other app is walked when its window opens and then
-     * only if it was found to host a web page, so scrolling a feed or a chat
-     * costs nothing here.
+     * navigating them; any other app is walked when its window opens, followed
+     * if it was found to host a web page, and otherwise looked at again only
+     * once per [InspectionPolicy.RECHECK_INTERVAL_MS], so scrolling a feed or a
+     * chat costs a bounded walk every few seconds at most.
      *
      * Everything that can say "nothing to do" is tested before the first node is
      * requested, because the window root itself is already a binder call.
@@ -297,7 +291,7 @@ class EnforcementService : AccessibilityService() {
         }
         retriedInspectionFor = null
 
-        scanSawWebView = null
+        lastScan = null
         try {
             for (root in roots) {
                 if (lockActive) {
@@ -306,14 +300,12 @@ class EnforcementService : AccessibilityService() {
                 }
                 if (rules != null && checkWebContent(packageName, root, kind == WindowKind.BROWSER, rules, stateChange, now)) return
             }
-            val sawWebView = scanSawWebView
-            if (kind == WindowKind.OTHER && roots.size == 1 && sawWebView != null) {
-                windowMemo.record(
-                    windowId,
-                    packageName,
-                    if (sawWebView) WindowVerdict.HAS_WEBVIEW else WindowVerdict.NO_WEBVIEW,
-                    now,
-                )
+            val scan = lastScan
+            // The verdict describes one window. The focused-window fallback in
+            // rootsFor can hand back a different window of the same package, and
+            // what that tree holds must not be written against this event's id.
+            if (kind == WindowKind.OTHER && scan != null && roots.size == 1 && roots[0].windowId == windowId) {
+                InspectionPolicy.verdictToRecord(scan)?.let { windowMemo.record(windowId, packageName, it, now) }
             }
         } finally {
             roots.forEach { it.recycleCompat() }
@@ -337,9 +329,10 @@ class EnforcementService : AccessibilityService() {
             return listOf(active)
         }
         val roots = rootsFromWindowList(packageName, windowId, now)
-        // An event with no window id cannot be matched to a window; settle for
-        // the focused one if it is at least this package's.
-        if (roots.isEmpty() && windowId < 0 && active != null && active.packageName?.toString() == packageName) {
+        // Whenever the list gave nothing, whatever the event's window id, settle
+        // for the focused window if it is at least this package's; see
+        // InspectionPolicy.activeRootStandsIn for why the id must not gate this.
+        if (active != null && InspectionPolicy.activeRootStandsIn(roots.size, packageName, active.packageName?.toString())) {
             roots.add(active)
         } else {
             active?.recycleCompat()
@@ -357,9 +350,7 @@ class EnforcementService : AccessibilityService() {
                     // A keyboard or overlay. Its type cannot change, so remember
                     // that and skip every later event from it without a lookup.
                     // Lockable packages are never skipped (see InspectionPolicy).
-                    if (windowId >= 0 && !SettingsLockDetector.isLockablePackage(packageName)) {
-                        windowMemo.record(windowId, packageName, WindowVerdict.NOT_INSPECTABLE, now)
-                    }
+                    InspectionPolicy.rememberNotInspectable(windowMemo, windowId, packageName, now)
                     continue
                 }
                 val root = runCatching { window.root }.getOrNull() ?: continue
@@ -380,11 +371,11 @@ class EnforcementService : AccessibilityService() {
         val isReady: Boolean get() = scan != null
 
         fun get(): UrlScan = scan ?: run {
-            nodeAccess.minWebViewHeightPx = resources.displayMetrics.heightPixels * 2 / 5
+            nodeAccess.calibrateFor(root, resources.displayMetrics.heightPixels)
             val limits = if (isBrowser) InspectionPolicy.BROWSER_LIMITS else InspectionPolicy.GENERIC_LIMITS
             UrlScanner.scan(root, nodeAccess, limits).also {
                 scan = it
-                scanSawWebView = it.webViewSeen
+                lastScan = it
             }
         }
     }
@@ -541,15 +532,18 @@ class EnforcementService : AccessibilityService() {
     }
 
     private fun reloadPresets() {
-        val generation = ++presetGeneration
+        val ticket = presetStore.beginLoad()
         scope.launch {
             runCatching {
+                // Read once, and stored with the result: the mode a set was loaded
+                // for is what decides whether it may be used (see PresetStore).
+                val mode = prefs.websiteMode
                 val loaded = if (prefs.siteBlockingEnabled) {
-                    presets.loadEnabledDomains(prefs.websiteMode, prefs.enabledWebsitePresets)
+                    presets.loadEnabledDomains(mode, prefs.enabledWebsitePresets)
                 } else {
                     CompactDomainSet.EMPTY
                 }
-                if (generation == presetGeneration) presetDomains = loaded
+                presetStore.publish(ticket, mode, loaded)
             }.onFailure { Log.w(TAG, "Preset reload failed", it) }
         }
     }

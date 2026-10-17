@@ -93,7 +93,10 @@ object UrlMatcher {
 
     private fun isIpv4(host: String): Boolean {
         val parts = host.split('.')
-        return parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.all(Char::isDigit) && p.toInt() in 0..255 }
+        // toIntOrNull, not toInt: a run of digits too long for an Int is ordinary
+        // on-screen text (an order number with dots), and hostOf runs inside the
+        // tree walk, where a throw would abandon the whole window unjudged.
+        return parts.size == 4 && parts.all { p -> p.isNotEmpty() && p.all(Char::isDigit) && p.toIntOrNull() in 0..255 }
     }
 
     /**

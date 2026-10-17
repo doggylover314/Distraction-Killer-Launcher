@@ -37,6 +37,32 @@ internal class UrlScan {
     }
 }
 
+/**
+ * How tall a WebView must be to count as the page of an in-app browser and not
+ * an ad banner. The yardstick is the window the WebView lives in. The display
+ * is the wrong one: in split-screen the app's whole window is about half the
+ * display, so a WebView filling it could never reach 40% of the display's
+ * height. A miss is costly, because a window that holds no large WebView is not
+ * judged at all.
+ *
+ * A sheet shorter than its own window can still fall short of the threshold.
+ * That miss no longer sticks, since a page-free verdict now expires (see
+ * [InspectionPolicy.RECHECK_INTERVAL_MS]), but it can last that long.
+ */
+internal object WebViewSize {
+
+    fun minHeightPx(windowHeightPx: Int, displayHeightPx: Int): Int {
+        // Bounds that are empty, or taller than the display, say nothing
+        // trustworthy about the window, so the display stands in.
+        val reference = if (windowHeightPx > 0 && (displayHeightPx <= 0 || windowHeightPx < displayHeightPx)) {
+            windowHeightPx
+        } else {
+            displayHeightPx
+        }
+        return (reference.coerceAtLeast(0).toLong() * 2 / 5).toInt()
+    }
+}
+
 internal object UrlScanner {
 
     /** Substrings of view ids that mark a URL display in any app. */

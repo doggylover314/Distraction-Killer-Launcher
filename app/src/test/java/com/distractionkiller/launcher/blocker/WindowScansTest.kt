@@ -169,6 +169,73 @@ class WindowScansTest {
     }
 
     @Test
+    fun `dotted text that overflows Int ahead of the url does not abandon the walk`() {
+        // An order number with dots, on screen before the address bar in tree order.
+        val tree = node(
+            text("1.2.3.99999999999"),
+            text("99999999999.1.1.1"),
+            FakeNode(name = "bar", id = "app:id/url_bar", text = "https://found.example/x", editable = true),
+            webView(true),
+            name = "root",
+        )
+        val (scan, _) = scan(tree)
+        assertNull(scan.plain)
+        assertEquals("found.example", scan.idMatch?.host)
+        assertTrue(scan.webViewSeen)
+        assertFalse(scan.stats!!.truncated)
+        // The walk finished, so the window gets a verdict instead of failing the same way forever.
+        assertEquals(WindowVerdict.HAS_WEBVIEW, InspectionPolicy.verdictToRecord(scan))
+    }
+
+    // ------------------------------------------- how big a page-sized WebView is
+
+    @Test
+    fun `a full-screen window is measured as before`() {
+        assertEquals(800, WebViewSize.minHeightPx(windowHeightPx = 2_000, displayHeightPx = 2_000))
+    }
+
+    @Test
+    fun `in split-screen a WebView filling the window counts as a page`() {
+        val display = 2_400
+        val window = 1_200
+        val fillsWindow = 900 // the window less a toolbar
+        val byDisplay = display * 2 / 5
+        assertTrue("old yardstick would have missed it", fillsWindow < byDisplay)
+        assertTrue(fillsWindow >= WebViewSize.minHeightPx(window, display))
+    }
+
+    @Test
+    fun `a half-height sheet counts but an ad banner still does not`() {
+        val display = 2_400
+        val minimum = WebViewSize.minHeightPx(windowHeightPx = 1_200, displayHeightPx = display)
+        assertEquals(480, minimum)
+        assertTrue(560 >= minimum) // a page in a half-height window
+        assertTrue(150 < minimum) // a 50 dp banner on a 3x screen
+    }
+
+    @Test
+    fun `unusable window bounds fall back to the display`() {
+        assertEquals(800, WebViewSize.minHeightPx(windowHeightPx = 0, displayHeightPx = 2_000))
+        assertEquals(800, WebViewSize.minHeightPx(windowHeightPx = -5, displayHeightPx = 2_000))
+        // Taller than the display says nothing about the window; the display stands in.
+        assertEquals(800, WebViewSize.minHeightPx(windowHeightPx = 5_000, displayHeightPx = 2_000))
+        // Display unknown: the window is all there is.
+        assertEquals(400, WebViewSize.minHeightPx(windowHeightPx = 1_000, displayHeightPx = 0))
+        assertEquals(0, WebViewSize.minHeightPx(windowHeightPx = 0, displayHeightPx = 0))
+    }
+
+    @Test
+    fun `the window yardstick is never stricter than the display one`() {
+        for (display in listOf(800, 1_920, 2_400, 3_200)) {
+            for (window in 1..display step 37) {
+                assertTrue(WebViewSize.minHeightPx(window, display) <= WebViewSize.minHeightPx(display, display))
+            }
+        }
+        // And it cannot overflow however large the inputs.
+        assertTrue(WebViewSize.minHeightPx(Int.MAX_VALUE, Int.MAX_VALUE) > 0)
+    }
+
+    @Test
     fun `url hints are recognised in any case`() {
         assertTrue(UrlScanner.hasUrlHint("com.x:id/UrlBar"))
         assertTrue(UrlScanner.hasUrlHint("com.x:id/toolbar_address_bar"))

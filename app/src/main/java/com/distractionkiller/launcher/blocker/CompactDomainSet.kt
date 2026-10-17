@@ -26,6 +26,13 @@ import java.util.Arrays
  * which is the right threat model for a tool that guards against impulse, not
  * against an engineer. The user's own custom list stays as exact strings (see
  * [SiteRules]) because it is tiny and exactness there is free.
+ *
+ * A name is the same name in any ASCII case and with a trailing root dot, so
+ * the entry points ([matchesHostOrParent], [containsExact], [Builder.addDomain])
+ * fold A-Z and ignore trailing dots, exactly as the preset parser does for the
+ * bundled files. [UrlMatcher.hostOf] already produces that form, but a set that
+ * only worked for its one current caller would fail open the day a second
+ * producer of hosts appeared.
  */
 class CompactDomainSet private constructor(private val hashes: LongArray) {
 
@@ -34,7 +41,7 @@ class CompactDomainSet private constructor(private val hashes: LongArray) {
     fun isEmpty(): Boolean = hashes.isEmpty()
 
     /** True if [domain] itself, with no parent-domain walk, is in the set. */
-    fun containsExact(domain: String): Boolean = probe(hashOf(domain))
+    fun containsExact(domain: String): Boolean = probe(normalizedHash(domain))
 
     /**
      * True if [host] or any parent domain of it is in the set. Hashes every
@@ -44,10 +51,12 @@ class CompactDomainSet private constructor(private val hashes: LongArray) {
      */
     fun matchesHostOrParent(host: String): Boolean {
         if (hashes.isEmpty()) return false
+        var end = host.length
+        while (end > 0 && host[end - 1] == '.') end--
         var h = SEED
-        var i = host.length - 1
+        var i = end - 1
         while (i >= 0) {
-            h = step(h, host[i].code)
+            h = step(h, foldAscii(host[i].code))
             // A suffix is a candidate only where it starts at a label boundary.
             if ((i == 0 || host[i - 1] == '.') && probe(mix(h))) return true
             i--
@@ -74,7 +83,7 @@ class CompactDomainSet private constructor(private val hashes: LongArray) {
             buf[count++] = hash
         }
 
-        fun addDomain(domain: String) = addHash(hashOf(domain))
+        fun addDomain(domain: String) = addHash(normalizedHash(domain))
 
         /** Drops everything added after the first [newSize] entries. */
         fun truncate(newSize: Int) {
@@ -120,7 +129,22 @@ class CompactDomainSet private constructor(private val hashes: LongArray) {
             return h
         }
 
+        /**
+         * The documented hash of [domain] exactly as given, with no case folding
+         * and no dot trimming. Case sensitive on purpose: it is the function the
+         * stored hashes are pinned to. The set's own entry points normalise
+         * first, see [normalizedHash].
+         */
         fun hashOf(domain: CharSequence): Long = hashRange(domain, 0, domain.length, foldAsciiCase = false)
+
+        /** The hash a set stores and looks up for [domain]: A-Z folded, trailing dots ignored. */
+        private fun normalizedHash(domain: CharSequence): Long {
+            var end = domain.length
+            while (end > 0 && domain[end - 1] == '.') end--
+            return hashRange(domain, 0, end, foldAsciiCase = true)
+        }
+
+        private fun foldAscii(c: Int): Int = if (c in 'A'.code..'Z'.code) c + ('a'.code - 'A'.code) else c
 
         /**
          * Hash of text[start, end). [foldAsciiCase] lower-cases A-Z on the fly,
@@ -132,9 +156,8 @@ class CompactDomainSet private constructor(private val hashes: LongArray) {
             var h = SEED
             var i = end - 1
             while (i >= start) {
-                var c = text[i].code
-                if (foldAsciiCase && c in 'A'.code..'Z'.code) c += 'a'.code - 'A'.code
-                h = step(h, c)
+                val c = text[i].code
+                h = step(h, if (foldAsciiCase) foldAscii(c) else c)
                 i--
             }
             return mix(h)

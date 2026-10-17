@@ -103,20 +103,22 @@ internal class WindowMemo(private val capacity: Int = DEFAULT_CAPACITY) {
  * When a window is worth reading. The expensive part of inspecting is walking
  * the tree, because every node fetched is a cross-process call served by the
  * inspected app's UI thread. Content-changed events fire continuously while an
- * app scrolls, so the policy spends nothing on them for ordinary apps and
- * keeps the old cadence only where the user is actually navigating something
- * the service must judge.
+ * app scrolls, so an ordinary app costs at most one bounded walk per window per
+ * [RECHECK_INTERVAL_MS], and the old cadence is kept only where the user is
+ * actually navigating something the service must judge.
  */
 internal object InspectionPolicy {
     const val FAST_INTERVAL_MS = 300L
     const val SLOW_INTERVAL_MS = 1_200L
 
     /**
-     * An ordinary window already known to hold no web page is looked at again
-     * on a window-state event only this long after the last look. A fragment
-     * swap that brings in a WebView (some cross-platform apps navigate to a web
-     * view screen inside one window) announces itself as a state change, while
-     * a chatty app that repeats state changes does not get walked each time.
+     * An ordinary window already known to hold no web page is looked at again,
+     * on a state change or a content change, only this long after the last
+     * look. A fragment swap, a bottom sheet or a Compose destination can bring
+     * a WebView into a window that was judged page-free, and then the window
+     * may raise no state event at all, only content changes. A look refreshes
+     * the entry (see [WindowMemo.record]), so a chatty app is walked once per
+     * interval and not once per event.
      */
     const val RECHECK_INTERVAL_MS = 5_000L
 
@@ -155,9 +157,41 @@ internal object InspectionPolicy {
                 // Never seen (the service attached mid-window, or the state event was
                 // coalesced away): look once. Known to hold a page: keep following it.
                 known == null || known.verdict == WindowVerdict.HAS_WEBVIEW -> now - lastSlowAt >= SLOW_INTERVAL_MS
-                else -> false
+                // "No page" is a snapshot, not a fact. Without this expiry a window
+                // judged page-free once was never read again on content changes, so
+                // an in-app browser opened inside it was never judged.
+                else -> now - known.updatedAt >= RECHECK_INTERVAL_MS && now - lastSlowAt >= SLOW_INTERVAL_MS
             }
         }
+    }
+
+    /**
+     * What a walk of an ordinary window may teach the memo, or null to teach it
+     * nothing. A page that was seen stays true however the walk ended. "No page"
+     * is only true if the walk read the whole window: when the node or depth
+     * budget ran out the WebView may simply lie in the part not read, and the
+     * budget is deterministic over an unchanged hierarchy, so a cached negative
+     * would be re-derived identically on every recheck and never corrected.
+     * Left unrecorded, the window keeps the cadence of one never seen, which is
+     * the right cost for a window the service could not read. Missing stats are
+     * treated like truncation.
+     */
+    fun verdictToRecord(scan: UrlScan): WindowVerdict? = when {
+        scan.webViewSeen -> WindowVerdict.HAS_WEBVIEW
+        scan.stats?.truncated == false -> WindowVerdict.NO_WEBVIEW
+        else -> null
+    }
+
+    /**
+     * Remembers that a window is not an application window (keyboard, overlay),
+     * except for a lockable package. [shouldInspect] already ignores the entry for
+     * those, but a system window of a lockable package can later become the
+     * focused one, so the write side refuses too and neither protection depends
+     * on the other staying in place.
+     */
+    fun rememberNotInspectable(memo: WindowMemo, windowId: Int, packageName: String, now: Long) {
+        if (SettingsLockDetector.isLockablePackage(packageName)) return
+        memo.record(windowId, packageName, WindowVerdict.NOT_INSPECTABLE, now)
     }
 
     fun sweepDue(now: Long, lastSweepAt: Long): Boolean = now - lastSweepAt >= SWEEP_INTERVAL_MS
@@ -175,4 +209,17 @@ internal object InspectionPolicy {
         eventPackage: String,
         activePackage: String?,
     ): Boolean = eventWindowId >= 0 && eventWindowId == activeWindowId && eventPackage == activePackage
+
+    /**
+     * Whether the focused window's root stands in when the window list yielded
+     * no root for the event. Deliberately blind to the event's window id: the
+     * list can come back empty for an id it was given (the window's root is
+     * still null right after a window change, or the window is not in the list
+     * yet), and an event that carries an id is the common case, so gating this
+     * on a missing id left exactly those events with no inspection at all, for
+     * the Settings lock as much as for websites. The package check is what
+     * stops another app's tree being walked under this package's name.
+     */
+    fun activeRootStandsIn(rootsFromWindowList: Int, eventPackage: String, activePackage: String?): Boolean =
+        rootsFromWindowList == 0 && activePackage != null && activePackage == eventPackage
 }

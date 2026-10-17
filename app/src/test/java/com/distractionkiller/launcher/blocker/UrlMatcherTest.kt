@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Random
 
 class UrlMatcherTest {
 
@@ -32,6 +33,52 @@ class UrlMatcherTest {
         assertNull(UrlMatcher.hostOf("999.1.1.1"))
         // A file name still parses; the caller decides whether a bare name counts.
         assertEquals("invoice.pdf", UrlMatcher.hostOf("invoice.pdf"))
+    }
+
+    @Test
+    fun `dotted text whose numbers overflow Int is not a host and does not throw`() {
+        // Each of these used to reach String.toInt() and throw NumberFormatException,
+        // which unwound the whole tree walk that called hostOf.
+        assertNull(UrlMatcher.hostOf("1.2.3.99999999999"))
+        assertNull(UrlMatcher.hostOf("99999999999.1.1.1"))
+        assertNull(UrlMatcher.hostOf("1.2.3.2147483648")) // Int.MAX_VALUE + 1
+        assertNull(UrlMatcher.hostOf("1.2.3.4294967296")) // 2^32, wraps to 0 in a naive parse
+        assertNull(UrlMatcher.hostOf("http://1.2.3.99999999999/path"))
+        assertNull(UrlMatcher.hostOf("1.2.3.99999999999:8080"))
+        // The in-range boundary is unchanged.
+        assertEquals("255.255.255.255", UrlMatcher.hostOf("255.255.255.255"))
+        assertEquals("0.0.0.0", UrlMatcher.hostOf("0.0.0.0"))
+        assertNull(UrlMatcher.hostOf("1.2.3.256"))
+    }
+
+    @Test
+    fun `no input makes hostOf throw`() {
+        // The scan calls hostOf from inside the tree walk, so one throw loses the whole window.
+        val alphabet = "0123456789.:/@[]-_%#?&=aAzZ\u00e9\u0661\u200b "
+        val rng = Random(2024)
+        repeat(200_000) {
+            val text = buildString { repeat(1 + rng.nextInt(24)) { append(alphabet[rng.nextInt(alphabet.length)]) } }
+            try {
+                UrlMatcher.hostOf(text)
+            } catch (e: Exception) {
+                throw AssertionError("hostOf threw for \"$text\"", e)
+            }
+        }
+        // Dotted numbers with runs of digits of every length: the shape that reaches the IPv4 check.
+        repeat(50_000) {
+            val parts = List(1 + rng.nextInt(5)) { buildString { repeat(1 + rng.nextInt(14)) { append(('0' + rng.nextInt(10))) } } }
+            val text = parts.joinToString(".") + listOf("", "/x", ":80", "?q=1")[rng.nextInt(4)]
+            try {
+                UrlMatcher.hostOf(text)
+            } catch (e: Exception) {
+                throw AssertionError("hostOf threw for \"$text\"", e)
+            }
+        }
+        // Shapes that are valid-looking up to the point they go wrong.
+        listOf(
+            "9".repeat(5_000) + ".9.9.9", "1.1.1." + "9".repeat(5_000), "1.2.3.\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669\u0661\u0662",
+            "[" + "1".repeat(1_000), "about:reader?url=%", "about:reader?url=%zz.com",
+        ).forEach { UrlMatcher.hostOf(it) }
     }
 
     @Test

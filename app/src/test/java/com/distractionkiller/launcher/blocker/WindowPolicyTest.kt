@@ -24,14 +24,35 @@ class WindowPolicyTest {
     // ------------------------------------------------------------ the policy
 
     @Test
-    fun `scrolling an ordinary app costs nothing once its window is known`() {
+    fun `scrolling an ordinary app costs nothing between rechecks`() {
         val known = entry(WindowVerdict.NO_WEBVIEW, updatedAt = 99_000L)
-        // A thousand content events over ten minutes, none of them due to anything.
+        // Content events every 600 ms for the whole of the recheck interval after the look.
         var inspections = 0
-        for (i in 0 until 1_000) {
-            if (inspect(WindowKind.OTHER, stateChange = false, known = known, now = 100_000L + i * 600L)) inspections++
+        var now = 99_600L
+        while (now < 99_000L + InspectionPolicy.RECHECK_INTERVAL_MS) {
+            if (inspect(WindowKind.OTHER, stateChange = false, known = known, now = now)) inspections++
+            now += 600L
         }
         assertEquals(0, inspections)
+    }
+
+    @Test
+    fun `a window known to have no page is walked again on content changes once the recheck interval passes`() {
+        // The earlier version of this test replayed ten minutes of content events against one
+        // unrefreshed entry and demanded zero walks. That pinned the bug: an in-app browser that
+        // appears inside a window already judged page-free (a fragment, a bottom sheet) announces
+        // itself with content changes only, and was never looked at again.
+        val known = entry(WindowVerdict.NO_WEBVIEW, updatedAt = 100_000L)
+        assertFalse(inspect(WindowKind.OTHER, stateChange = false, known = known, now = 104_999L))
+        assertTrue(inspect(WindowKind.OTHER, stateChange = false, known = known, now = 105_000L))
+    }
+
+    @Test
+    fun `the slow interval still limits a content-change recheck`() {
+        val known = entry(WindowVerdict.NO_WEBVIEW, updatedAt = 0L)
+        // Another ordinary window was walked 100 ms ago; the budget is shared.
+        assertFalse(inspect(WindowKind.OTHER, stateChange = false, known = known, now = 100_000L, lastSlowAt = 99_900L))
+        assertTrue(inspect(WindowKind.OTHER, stateChange = false, known = known, now = 100_000L, lastSlowAt = 98_800L))
     }
 
     @Test

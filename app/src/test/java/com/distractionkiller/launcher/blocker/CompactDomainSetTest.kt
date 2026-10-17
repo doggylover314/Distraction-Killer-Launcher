@@ -2,6 +2,7 @@ package com.distractionkiller.launcher.blocker
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Random
@@ -152,6 +153,65 @@ class CompactDomainSetTest {
         listOf("reddit.com", "a.b", "xn--bcher-kva.example", "").forEach {
             assertEquals(it, reference(it), CompactDomainSet.hashOf(it))
         }
+    }
+
+    @Test
+    fun `a host matches in any ASCII case and with trailing root dots`() {
+        val set = CompactDomainSet.of(listOf("reddit.com", "news.google.com"))
+        // hostOf already produces the lower-case, dot-free form, but the set must not depend on that.
+        listOf(
+            "Reddit.com", "WWW.REDDIT.COM", "wWw.ReDdIt.CoM", "reddit.com.", "www.reddit.com..", "Old.Reddit.COM.",
+            "EDITION.news.GOOGLE.com", "news.google.com.",
+        ).forEach { assertTrue(it, set.matchesHostOrParent(it)) }
+    }
+
+    @Test
+    fun `normalising the host does not widen the match`() {
+        val set = CompactDomainSet.of(listOf("reddit.com", "news.google.com"))
+        listOf(
+            "Google.com", "NOTREDDIT.COM", "reddit.com.evil.net.", "Reddit.com.Evil.NET", "com.", ".", "..", "", ".reddit",
+        ).forEach { assertFalse(it, set.matchesHostOrParent(it)) }
+    }
+
+    @Test
+    fun `a set built from mixed-case or dotted names answers the same as one built from the plain names`() {
+        val plain = CompactDomainSet.of(listOf("reddit.com", "news.google.com"))
+        val awkward = CompactDomainSet.of(listOf("Reddit.COM", "News.Google.Com."))
+        assertEquals(plain.size, awkward.size)
+        listOf("reddit.com", "www.reddit.com", "news.google.com", "google.com", "notreddit.com").forEach {
+            assertEquals(it, plain.matchesHostOrParent(it), awkward.matchesHostOrParent(it))
+        }
+        assertTrue(awkward.containsExact("REDDIT.com"))
+        assertTrue(awkward.containsExact("news.google.com."))
+        assertFalse(awkward.containsExact("www.reddit.com"))
+    }
+
+    @Test
+    fun `random case and trailing dots never change a verdict`() {
+        val domains = generate(5_000, seed = 21)
+        val compact = CompactDomainSet.of(domains)
+        val rng = Random(77)
+        repeat(50_000) {
+            val base = domains[rng.nextInt(domains.size)]
+            val host = when (rng.nextInt(3)) {
+                0 -> base
+                1 -> label(rng, 4) + "." + base
+                else -> "not$base"
+            }
+            val disguised = buildString {
+                host.forEach { append(if (rng.nextBoolean()) it.uppercaseChar() else it) }
+                repeat(rng.nextInt(3)) { append('.') }
+            }
+            assertEquals(disguised, compact.matchesHostOrParent(host), compact.matchesHostOrParent(disguised))
+        }
+    }
+
+    @Test
+    fun `the raw hash stays case and dot sensitive, which is what pins the stored form`() {
+        // The set normalises at its entry points; hashOf is the documented function underneath
+        // and must not, or the "documented function" test above would stop meaning anything.
+        assertNotEquals(CompactDomainSet.hashOf("Reddit.com"), CompactDomainSet.hashOf("reddit.com"))
+        assertNotEquals(CompactDomainSet.hashOf("reddit.com."), CompactDomainSet.hashOf("reddit.com"))
     }
 
     @Test
