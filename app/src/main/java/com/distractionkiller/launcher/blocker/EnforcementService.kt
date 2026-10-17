@@ -25,6 +25,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The part that makes the launcher hard to get around. Runs only while the user
@@ -64,6 +66,16 @@ class EnforcementService : AccessibilityService() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val handler = Handler(Looper.getMainLooper())
+
+    /**
+     * One reload at a time, in the order requested. Reloads run on IO threads,
+     * so without this an older one could finish last and put back a package
+     * list from before an install, leaving the new app unenforced.
+     */
+    private val reloadMutex = Mutex()
+
+    /** A failed reload is tried again: until one succeeds the lists may be empty, which enforces nothing. */
+    private val retryReload = Runnable { reload() }
 
     /** PackageManager-derived state. Rebuilt on package changes, read on every event. */
     @Volatile private var launchable: Set<String> = emptySet()
@@ -493,7 +505,9 @@ class EnforcementService : AccessibilityService() {
         // The system's own home chooser: Home would only reopen it, because
         // Home *is* the unresolved intent. Pick ourselves instead.
         if (SettingsLockDetector.isHomeChooser(packageName, texts, appLabel)) {
-            if (chooseSelfInHomeChooser(root)) toast(getString(R.string.toast_settings_locked))
+            // If this app's row cannot be found or pressed, Back dismisses the
+            // chooser. Doing nothing would leave it open for another launcher.
+            if (chooseSelfInHomeChooser(root)) toast(getString(R.string.toast_settings_locked)) else goBack()
             return true
         }
 
@@ -561,23 +575,32 @@ class EnforcementService : AccessibilityService() {
 
     private fun reload() {
         scope.launch {
-            runCatching {
-                val allLaunchable = appRepository.launchablePackagesAllProfiles()
-                val exemptions = appRepository.systemExemptPackages().toMutableSet()
-                // If another launcher has become the default, "home" now means
-                // that launcher. Sending it home would loop forever.
-                appRepository.defaultHomePackage()
-                    ?.takeIf { it != packageName }
-                    ?.let { other ->
-                        Log.w(TAG, "Another home app is the default: $other")
-                        exemptions.add(other)
-                    }
-                launchable = allLaunchable
-                homeApps = appRepository.homeAppPackages()
-                exempt = exemptions
-                browsers = appRepository.browserPackages()
-                visibleCache = null
-            }.onFailure { Log.w(TAG, "Reload failed", it) }
+            reloadMutex.withLock { reloadOnce() }
+        }
+    }
+
+    private fun reloadOnce() {
+        runCatching {
+            val allLaunchable = appRepository.launchablePackagesAllProfiles()
+            val exemptions = appRepository.systemExemptPackages().toMutableSet()
+            // If another launcher has become the default, "home" now means
+            // that launcher. Sending it home would loop forever.
+            appRepository.defaultHomePackage()
+                ?.takeIf { it != packageName }
+                ?.let { other ->
+                    Log.w(TAG, "Another home app is the default: $other")
+                    exemptions.add(other)
+                }
+            launchable = allLaunchable
+            homeApps = appRepository.homeAppPackages()
+            exempt = exemptions
+            browsers = appRepository.browserPackages()
+            visibleCache = null
+            handler.removeCallbacks(retryReload)
+        }.onFailure {
+            Log.w(TAG, "Reload failed", it)
+            handler.removeCallbacks(retryReload)
+            handler.postDelayed(retryReload, RELOAD_RETRY_MS)
         }
     }
 
@@ -605,6 +628,7 @@ class EnforcementService : AccessibilityService() {
     companion object {
         private const val TAG = "DKEnforcement"
         private const val ACTION_INTERVAL_MS = 600L
+        private const val RELOAD_RETRY_MS = 5_000L
         private const val TOAST_INTERVAL_MS = 2_500L
         private const val STUCK_WINDOW_MS = 2_000L
         private const val SOFT_INPUT_WINDOW = "android.inputmethodservice.SoftInputWindow"

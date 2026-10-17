@@ -163,4 +163,20 @@ class UrlMatcherTest {
         assertNull(UrlMatcher.blockedHost("https://example.com/", patterns))
         assertNull(UrlMatcher.blockedHost("reddit", patterns))
     }
+
+    @Test
+    fun `a URL in the query does not hide the host of a scheme-less bar`() {
+        assertEquals("x.com", UrlMatcher.hostOf("x.com/intent/post?url=https://e.com"))
+        assertEquals("reddit.com", UrlMatcher.hostOf("reddit.com/?q=a@b.com"))
+        assertEquals("medium.com", UrlMatcher.hostOf("medium.com/@someone/post"))
+        // Still an e-mail address, and still not a host.
+        assertNull(UrlMatcher.hostOf("john@example.com"))
+        assertNull(UrlMatcher.hostOf("chrome://settings"))
+    }
+
+    @Test
+    fun `punycode top-level domains are hosts`() {
+        assertEquals("xn--80ak6aa92e.xn--p1ai", UrlMatcher.hostOf("https://xn--80ak6aa92e.xn--p1ai/"))
+        assertEquals("xn--80ak6aa92e.xn--p1ai", UrlMatcher.hostOf("xn--80ak6aa92e.xn--p1ai"))
+    }
 }
