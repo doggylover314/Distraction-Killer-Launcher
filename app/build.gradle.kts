@@ -55,9 +55,14 @@ android {
     buildTypes {
         release {
             if (hasReleaseKey) signingConfig = signingConfigs.getByName("release")
-            // Left unminified so a locally built release APK behaves exactly
-            // like the debug one. Turn this on if you care about APK size.
-            isMinifyEnabled = false
+            // On by default now, because this runs on old phones. R8 does more
+            // for a Compose app than shrink the download: it inlines and
+            // removes dead framework code, which cuts class loading and so the
+            // cold start and the first frames, the part a slow device feels
+            // most. Resource shrinking only touches res/, never assets/, so
+            // the bundled website presets are untouched.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
