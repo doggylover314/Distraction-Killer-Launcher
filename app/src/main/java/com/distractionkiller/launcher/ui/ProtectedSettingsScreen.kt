@@ -231,7 +231,8 @@ fun ProtectedSettingsScreen(
             item {
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
                     if (unlockGrantedAt <= nowElapsed && nowElapsed < unlockedUntil) {
-                        val minutesLeft = ((unlockedUntil - nowElapsed) / 60_000L) + 1
+                        // Rounded up, so a fresh 10 min grant reads "10", not "11".
+                        val minutesLeft = (unlockedUntil - nowElapsed + 59_999L) / 60_000L
                         InfoText("Android Settings changes allowed for about $minutesLeft min.", highlighted = true)
                     }
                     Row(

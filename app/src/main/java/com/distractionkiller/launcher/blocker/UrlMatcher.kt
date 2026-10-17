@@ -32,11 +32,19 @@ object UrlMatcher {
             if (text.isEmpty()) return null
         }
 
-        val schemeEnd = text.indexOf("://")
+        // Only letters before "://" make a scheme. In "x.com/go?next=https://y"
+        // the first "://" sits in the query of a host-first URL; reading
+        // "x.com/go?next=https" as a scheme made the whole URL unjudgeable.
+        val schemeEnd = text.indexOf("://").let { i ->
+            if (i > 0 && text.substring(0, i).all { it.isLetter() }) i else -1
+        }
         // Without a scheme, "name@host" is far more likely an e-mail address
         // shown somewhere in an app than a URL with credentials. Treating it
-        // as a host would let a contact card trigger a block.
-        if (schemeEnd < 0 && '@' in text) return null
+        // as a host would let a contact card trigger a block. Only the part
+        // before the first '/', '?' or '#' can hold credentials, so an '@' in a
+        // path or query ("x.com/?email=a@b.com") does not make it an e-mail.
+        val authority = text.substringBefore('/').substringBefore('?').substringBefore('#')
+        if (schemeEnd < 0 && '@' in authority) return null
         if (schemeEnd >= 0) {
             val scheme = text.substring(0, schemeEnd).lowercase(Locale.ROOT)
             if (scheme != "http" && scheme != "https") return null
@@ -57,9 +65,11 @@ object UrlMatcher {
         // The last label must be a real TLD: letters, at least two. That
         // rejects "4.7", "12.99" and "v1.2.3", which ordinary apps show all
         // the time. Dotted-quad IPv4 literals are the one numeric exception.
+        // Punycode TLDs ("xn--p1ai") are ASCII with digits and hyphens, so they
+        // are words too; rejecting them let a site on one through unjudged.
         if (host != "localhost" && !host.startsWith("[")) {
             val tld = host.substringAfterLast('.')
-            val tldIsWord = tld.length >= 2 && tld.all { it.isLetter() }
+            val tldIsWord = tld.length >= 2 && (tld.all { it.isLetter() } || tld.startsWith("xn--"))
             if (!tldIsWord && !isIpv4(host)) return null
         }
         // Browsers show internationalised names in Unicode; lists hold the
