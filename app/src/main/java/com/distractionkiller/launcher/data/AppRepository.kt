@@ -25,22 +25,24 @@ class AppRepository(context: Context) {
      * Every installed app that has a launcher entry, alphabetical.
      *
      * Blocking and not instant (a few hundred milliseconds on a loaded phone),
-     * so callers run it off the main thread.
+     * so callers run it off the main thread. Always queries; the screens go
+     * through [InstalledApps], which keeps the result between package changes.
      */
     fun loadLaunchableApps(): List<LaunchableApp> {
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         return queryActivities(intent)
             .asSequence()
+            // A few apps publish more than one launcher activity. We launch by
+            // package name, so collapse them to one row to match what tapping
+            // actually does. Done before the label lookup, which is a binder
+            // call and a resource read, so the duplicates never pay for it.
+            .distinctBy { it.activityInfo.packageName }
             .map { resolveInfo ->
                 LaunchableApp(
                     packageName = resolveInfo.activityInfo.packageName,
                     label = resolveInfo.loadLabel(pm).toString(),
                 )
             }
-            // A few apps publish more than one launcher activity. We launch by
-            // package name, so collapse them to one row to match what tapping
-            // actually does.
-            .distinctBy { it.packageName }
             .sortedWith(AppFilter.LABEL_ORDER)
             .toList()
     }

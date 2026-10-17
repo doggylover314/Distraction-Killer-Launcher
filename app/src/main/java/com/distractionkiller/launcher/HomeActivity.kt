@@ -24,6 +24,7 @@ import android.os.SystemClock
 import com.distractionkiller.launcher.blocker.EnforcementService
 import com.distractionkiller.launcher.data.AppFilter
 import com.distractionkiller.launcher.data.AppRepository
+import com.distractionkiller.launcher.data.InstalledApps
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.Prefs
 import com.distractionkiller.launcher.ui.HomeScreen
@@ -46,10 +47,10 @@ class HomeActivity : ComponentActivity() {
     private lateinit var appRepository: AppRepository
 
     /**
-     * Bumped in onResume. Coming back from Settings, or from another app after
-     * installing or removing something, re-reads preferences and re-queries
-     * PackageManager. Cheaper and easier to follow than a package-change
-     * BroadcastReceiver, and a launcher is always resumed before it is seen.
+     * Bumped in onResume. Coming back from Settings re-reads preferences and
+     * re-filters the app list. The list itself comes from [InstalledApps],
+     * which only goes back to PackageManager after a package or language
+     * change, so a resume with nothing new costs no binder calls.
      */
     private val resumeCounter = mutableIntStateOf(0)
 
@@ -57,8 +58,8 @@ class HomeActivity : ComponentActivity() {
      * Drives only the search reset. Kept apart from [resumeCounter] because a
      * Home press on a launcher that is already in front delivers onNewIntent,
      * which can happen as often as every 600 ms while enforcement bounces an
-     * app that keeps relaunching. Sharing one counter would re-run the whole
-     * PackageManager query for each of those presses.
+     * app that keeps relaunching. Sharing one counter would re-read the
+     * preferences and re-filter the list for each of those presses.
      */
     private val searchResetCounter = mutableIntStateOf(0)
 
@@ -137,8 +138,17 @@ private fun HomeRoute(
     val context = LocalContext.current
     val weatherRepository = remember { WeatherRepository(context) }
 
-    var apps by remember { mutableStateOf(emptyList<LaunchableApp>()) }
-    var isLoading by remember { mutableStateOf(true) }
+    // Warm cache: the list is filtered right here, during composition, with
+    // the current preferences. Not in the effect below, because an effect only
+    // starts after the first frame, so a resumed screen would paint the old
+    // list (or a loading hint) for a frame before correcting itself.
+    val warmApps = remember(refreshKey) { warmVisibleApps(prefs, context.packageName) }
+
+    // What the cold path last produced, or last saw warm. It stays on screen
+    // while a stale cache reloads, and after a reload fails.
+    var lastApps by remember { mutableStateOf(warmApps ?: emptyList<LaunchableApp>()) }
+    var isLoading by remember { mutableStateOf(warmApps == null) }
+    val apps = warmApps ?: lastApps
     var weather by remember { mutableStateOf(prefs.cachedWeather) }
     var launchCounter by remember(refreshKey) { mutableStateOf(prefs.launchCounter) }
 
@@ -158,6 +168,13 @@ private fun HomeRoute(
     }
 
     LaunchedEffect(refreshKey) {
+        if (warmApps != null) {
+            // The screen already shows warmApps; this only remembers them as
+            // the fallback for a later failed reload.
+            lastApps = warmApps
+            isLoading = false
+            return@LaunchedEffect
+        }
         isLoading = true
         // runCatching, not because a failure is expected, but because this is
         // the home screen: a PackageManager call that throws (a large
@@ -171,18 +188,10 @@ private fun HomeRoute(
                     prefs.allowlist = appRepository.defaultAllowlist()
                     prefs.hasSeededDefaults = true
                 }
-                appRepository.loadLaunchableApps()
+                InstalledApps.load(appRepository)
             }
         }
-            .onSuccess { installed ->
-                apps = AppFilter.visibleApps(
-                    installed = installed,
-                    mode = prefs.mode,
-                    allowlist = prefs.allowlist,
-                    blocklist = prefs.blocklist,
-                    selfPackage = context.packageName,
-                )
-            }
+            .onSuccess { installed -> lastApps = visibleApps(installed, prefs, context.packageName) }
             .onFailure { error -> Log.w(TAG, "Could not read the installed app list", error) }
         isLoading = false
     }
@@ -209,7 +218,9 @@ private fun HomeRoute(
         apps = apps,
         mode = mode,
         resetKey = searchResetKey,
-        isLoading = isLoading,
+        // Never true on a warm resume, even if an earlier load was cancelled
+        // before it could clear the flag.
+        isLoading = isLoading && warmApps == null,
         weather = weather,
         config = config,
         launchCounts = if (config.showLaunchCounts) {
@@ -242,5 +253,26 @@ private fun HomeRoute(
         },
     )
 }
+
+/**
+ * The visible list built from the warm cache, or null to take the slow path.
+ * Null covers a cold or stale cache, and also a device that has not been
+ * seeded yet: seeding needs PackageManager lookups, and in allowlist mode an
+ * unseeded list would show an empty home screen until the reload finished.
+ * Main-thread safe: preference reads and a filter over an in-memory list.
+ */
+private fun warmVisibleApps(prefs: Prefs, selfPackage: String): List<LaunchableApp>? = runCatching {
+    if (!prefs.hasSeededDefaults) return@runCatching null
+    InstalledApps.cached()?.let { visibleApps(it, prefs, selfPackage) }
+}.getOrNull()
+
+private fun visibleApps(installed: List<LaunchableApp>, prefs: Prefs, selfPackage: String): List<LaunchableApp> =
+    AppFilter.visibleApps(
+        installed = installed,
+        mode = prefs.mode,
+        allowlist = prefs.allowlist,
+        blocklist = prefs.blocklist,
+        selfPackage = selfPackage,
+    )
 
 private const val TAG = "DistractionKiller"

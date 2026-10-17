@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.distractionkiller.launcher.data.AppRepository
+import com.distractionkiller.launcher.data.InstalledApps
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.Prefs
 import com.distractionkiller.launcher.data.ThemeMode
@@ -82,8 +83,12 @@ private fun SettingsRoute(
     var screen by rememberSaveable { mutableStateOf(Screen.APPEARANCE) }
     var hasPassword by remember { mutableStateOf(prefs.isPasswordSet) }
 
-    var apps by remember { mutableStateOf(emptyList<LaunchableApp>()) }
-    var isLoading by remember { mutableStateOf(true) }
+    // Usually warm, because the home screen loaded the list before this was
+    // opened. Taken at composition time so the first frame already has the
+    // apps instead of flashing the loading hint.
+    val warmApps = remember { InstalledApps.cached() }
+    var apps by remember { mutableStateOf(warmApps ?: emptyList<LaunchableApp>()) }
+    var isLoading by remember { mutableStateOf(warmApps == null) }
     // Kept apart from an empty list: "the query failed" and "nothing to show"
     // look the same in [apps], and the Appearance screen must not call every
     // saved dock entry hidden on the strength of a failed query.
@@ -98,9 +103,18 @@ private fun SettingsRoute(
     // screen: the query is blocking and cannot be cancelled mid-flight, so
     // restarting it on every navigation would leave the discarded ones running.
     LaunchedEffect(loadAttempt) {
+        // Looked at again here, not only above: a retry, or the home screen
+        // finishing a reload in the meantime, may have warmed it since.
+        val warm = InstalledApps.cached()
+        if (warm != null) {
+            apps = warm
+            loadFailed = false
+            isLoading = false
+            return@LaunchedEffect
+        }
         isLoading = true
         loadFailed = false
-        withContext(Dispatchers.IO) { runCatching { appRepository.loadLaunchableApps() } }
+        withContext(Dispatchers.IO) { runCatching { InstalledApps.load(appRepository) } }
             .onSuccess { apps = it }
             .onFailure { loadFailed = true }
         isLoading = false

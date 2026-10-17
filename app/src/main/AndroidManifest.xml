@@ -44,6 +44,7 @@
     </queries>
 
     <application
+        android:name=".LauncherApp"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
