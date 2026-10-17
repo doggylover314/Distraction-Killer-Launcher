@@ -114,6 +114,28 @@ object SettingsLockDetector {
     fun isLockablePackage(packageName: String?): Boolean = packageName in LOCKABLE_PACKAGES
 
     /**
+     * Whether the lock needs to look at this window at all. Answered before any
+     * node is fetched, so a lockable window the lock has nothing to say about
+     * (switched off, mid-grace for our own permission prompt, or inside the
+     * password-unlocked window) costs no cross-process calls. [unlocked] is
+     * lazy and asked last, so a disabled lock never reads the unlock state.
+     */
+    inline fun shouldCheck(
+        lockEnabled: Boolean,
+        packageName: String?,
+        nowElapsed: Long,
+        suppressUntilElapsed: Long,
+        unlocked: () -> Boolean,
+    ): Boolean {
+        if (!lockEnabled) return false
+        // Our own permission prompt is drawn by PermissionController and names
+        // this app; HomeActivity announces it before asking. The grace covers
+        // only the dialog packages, never the Settings app itself.
+        if (nowElapsed < suppressUntilElapsed && packageName in ROLE_DIALOG_PACKAGES) return false
+        return !unlocked()
+    }
+
+    /**
      * @param windowTexts every visible text node in the window, in any order
      * @param appLabel this app's display name; any Settings screen mentioning
      *   it is one that can manage or remove it
@@ -125,7 +147,7 @@ object SettingsLockDetector {
         appLabel: String,
     ): Boolean {
         if (!isLockablePackage(packageName)) return false
-        val texts = windowTexts.mapNotNull { it?.toString()?.trim() }.filter { it.isNotEmpty() }
+        val texts = cleaned(windowTexts)
         if (texts.isEmpty()) return false
 
         val hasKeyword = texts.any { text -> keywords.any { it.equals(text, ignoreCase = true) } }
@@ -142,6 +164,16 @@ object SettingsLockDetector {
         return texts.any { text -> ACTION_WORDS.any { text.contains(it, ignoreCase = true) } }
     }
 
+    /** Trimmed, non-empty strings in one pass; a lockable window can hand over a thousand entries. */
+    private fun cleaned(windowTexts: Collection<CharSequence?>): List<String> {
+        val out = ArrayList<String>(windowTexts.size)
+        for (text in windowTexts) {
+            val value = text?.toString()?.trim()
+            if (!value.isNullOrEmpty()) out.add(value)
+        }
+        return out
+    }
+
     private fun isUsersPage(texts: List<String>): Boolean =
         texts.any { t -> USERS_PAGE_TITLES.any { it.equals(t, ignoreCase = true) } } &&
             texts.any { t -> USERS_PAGE_MARKERS.any { it.equals(t, ignoreCase = true) } }
@@ -153,7 +185,7 @@ object SettingsLockDetector {
      */
     fun isHomeChooser(packageName: String?, windowTexts: Collection<CharSequence?>, appLabel: String): Boolean {
         if (packageName !in CHOOSER_PACKAGES) return false
-        val texts = windowTexts.mapNotNull { it?.toString()?.trim() }
+        val texts = cleaned(windowTexts)
         val namesApp = texts.any { it.contains(appLabel, ignoreCase = true) }
         // Our own name contains "Launcher"; only the other texts may vouch
         // for this being the home chooser.

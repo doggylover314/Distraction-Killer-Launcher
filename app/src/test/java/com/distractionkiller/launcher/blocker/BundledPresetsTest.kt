@@ -14,6 +14,16 @@ class BundledPresetsTest {
 
     private val dir = File("src/main/assets/presets")
 
+    private fun loadSet(vararg ids: String): CompactDomainSet {
+        val builder = CompactDomainSet.Builder()
+        ids.forEach { id -> File(dir, "$id.txt").bufferedReader().useLines { PresetParser.addLines(it, builder) } }
+        return builder.build()
+    }
+
+    /** The domains as plain strings, for the checks that need to look at the text itself. */
+    private fun readDomains(id: String): List<String> =
+        File(dir, "$id.txt").readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith('#') }
+
     @Test
     fun `catalog exists and every preset it lists is present and well formed`() {
         val index = File(dir, "index.tsv")
@@ -37,11 +47,18 @@ class BundledPresetsTest {
 
             val file = File(dir, "${preset.id}.txt")
             assertTrue("missing ${file.path}", file.exists())
-            val raw = file.readLines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith('#') }
-            val parsed = PresetParser.parseDomains(raw.asSequence())
-            assertEquals("lines dropped by the parser in ${preset.id}", raw.size, parsed.size)
-            assertTrue("${preset.id} is empty", parsed.isNotEmpty())
-            assertFalse("${preset.id} contains a www. entry", parsed.any { it.startsWith("www.") })
+            val raw = readDomains(preset.id)
+            val builder = CompactDomainSet.Builder()
+            assertEquals(
+                "lines dropped by the parser in ${preset.id}",
+                raw.size,
+                PresetParser.addLines(raw.asSequence(), builder),
+            )
+            // Distinct hashes equal distinct lines: also proves the 64-bit hash
+            // has no collision anywhere in the data we actually ship.
+            assertEquals("duplicate or colliding entries in ${preset.id}", raw.size, builder.build().size)
+            assertTrue("${preset.id} is empty", raw.isNotEmpty())
+            assertFalse("${preset.id} contains a www. entry", raw.any { it.startsWith("www.") })
         }
     }
 
@@ -54,7 +71,7 @@ class BundledPresetsTest {
 
     @Test
     fun `the distractions preset catches the obvious sites and not their lookalikes`() {
-        val domains = File(dir, "distractions.txt").bufferedReader().useLines(PresetParser::parseDomains)
+        val domains = loadSet("distractions")
         listOf("www.reddit.com", "m.youtube.com", "instagram.com", "tiktok.com", "old.reddit.com").forEach {
             assertTrue("$it should match", SiteRules.matchesAny(it, domains))
         }
@@ -65,12 +82,11 @@ class BundledPresetsTest {
 
     @Test
     fun `the proxies preset covers translate and archive front ends and nothing that is allowed`() {
-        val proxies = File(dir, "proxies.txt").bufferedReader().useLines(PresetParser::parseDomains)
+        val proxies = loadSet("proxies")
         listOf("reddit-com.translate.goog", "translate.google.com", "web.archive.org", "12ft.io").forEach {
             assertTrue("$it should match", SiteRules.matchesAny(it, proxies))
         }
-        val allowed = listOf("essentials", "work", "learning")
-            .flatMap { File(dir, "$it.txt").bufferedReader().useLines(PresetParser::parseDomains) }
+        val allowed = listOf("essentials", "work", "learning").flatMap(::readDomains)
         allowed.forEach { assertFalse("$it is both allowed and a proxy", SiteRules.matchesAny(it, proxies)) }
     }
 
@@ -82,9 +98,27 @@ class BundledPresetsTest {
 
     @Test
     fun `parser drops garbage lines`() {
-        val parsed = PresetParser.parseDomains(
+        val builder = CompactDomainSet.Builder()
+        val accepted = PresetParser.addLines(
             sequenceOf("# comment", "", "Reddit.com", "http://x.com", "bad line", "0.0.0.0 y.com", "ok.example"),
+            builder,
         )
-        assertEquals(setOf("reddit.com", "ok.example"), parsed)
+        assertEquals(2, accepted)
+        assertEquals(CompactDomainSet.of(setOf("reddit.com", "ok.example")).size, builder.build().size)
+        val set = builder.build()
+        assertTrue(set.containsExact("reddit.com"))
+        assertTrue(set.containsExact("ok.example"))
+        assertFalse(set.containsExact("x.com"))
+    }
+
+    @Test
+    fun `the whole adult preset loads and entries across the file match`() {
+        val adult = loadSet("adult")
+        val lines = readDomains("adult")
+        assertEquals(lines.size, adult.size)
+        // Spot checks across the file, not just its start.
+        listOf(0, lines.size / 3, lines.size / 2, lines.lastIndex).forEach { i ->
+            assertTrue(lines[i], adult.matchesHostOrParent("www." + lines[i]))
+        }
     }
 }

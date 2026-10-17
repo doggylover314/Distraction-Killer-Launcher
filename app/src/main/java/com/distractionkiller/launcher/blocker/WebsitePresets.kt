@@ -44,24 +44,36 @@ class WebsitePresets(context: Context) {
 
     fun presetsFor(mode: WebsiteMode): List<WebsitePreset> = catalog().filter { it.appliesTo == mode }
 
-    /** Domains in one preset. Blocking read; call off the main thread. */
-    fun loadDomains(id: String): Set<String> = runCatching {
-        assets.open("$DIR/$id.txt").bufferedReader().useLines(PresetParser::parseDomains)
-    }.getOrElse {
-        Log.w(TAG, "Preset $id unreadable", it)
-        emptySet()
+    /**
+     * Appends one preset's domains to [into]. A preset that cannot be read
+     * leaves [into] as it was, so a half-read file never leaves part of a
+     * category switched on.
+     */
+    private fun loadInto(id: String, into: CompactDomainSet.Builder) {
+        val before = into.size
+        runCatching {
+            assets.open("$DIR/$id.txt").bufferedReader().useLines { PresetParser.addLines(it, into) }
+        }.onFailure {
+            Log.w(TAG, "Preset $id unreadable", it)
+            into.truncate(before)
+        }
     }
 
     /** Union of every enabled preset that applies to [mode]. Off the main thread. */
-    fun loadEnabledDomains(mode: WebsiteMode, enabledIds: Set<String>): Set<String> {
-        val result = HashSet<String>()
+    fun loadEnabledDomains(mode: WebsiteMode, enabledIds: Set<String>): CompactDomainSet {
+        val builder = CompactDomainSet.Builder()
         presetsFor(mode)
             .filter { it.id in enabledIds }
-            .forEach { result.addAll(loadDomains(it.id)) }
-        return result
+            .forEach { loadInto(it.id, builder) }
+        return builder.build()
     }
 
-    fun countDomains(id: String): Int = loadDomains(id).size
+    /** Distinct domains in one preset. Blocking read; call off the main thread. */
+    fun countDomains(id: String): Int {
+        val builder = CompactDomainSet.Builder()
+        loadInto(id, builder)
+        return builder.build().size
+    }
 
     private companion object {
         const val TAG = "DKPresets"

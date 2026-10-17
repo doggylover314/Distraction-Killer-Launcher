@@ -8,6 +8,7 @@ import org.junit.Test
 class SiteRulesTest {
 
     private val domains = setOf("reddit.com", "youtube.com", "news.google.com")
+    private val none = CompactDomainSet.EMPTY
 
     @Test
     fun `matches the domain itself and any subdomain`() {
@@ -36,21 +37,21 @@ class SiteRulesTest {
 
     @Test
     fun `blocklist mode blocks listed hosts only`() {
-        assertTrue(SiteRules.shouldBlock("old.reddit.com", WebsiteMode.BLOCKLIST, domains, emptySet()))
-        assertFalse(SiteRules.shouldBlock("wikipedia.org", WebsiteMode.BLOCKLIST, domains, emptySet()))
-        assertFalse(SiteRules.shouldBlock(null, WebsiteMode.BLOCKLIST, domains, emptySet()))
+        assertTrue(SiteRules.shouldBlock("old.reddit.com", WebsiteMode.BLOCKLIST, domains, none))
+        assertFalse(SiteRules.shouldBlock("wikipedia.org", WebsiteMode.BLOCKLIST, domains, none))
+        assertFalse(SiteRules.shouldBlock(null, WebsiteMode.BLOCKLIST, domains, none))
     }
 
     @Test
     fun `allowlist mode blocks everything that is not listed`() {
-        assertFalse(SiteRules.shouldBlock("old.reddit.com", WebsiteMode.ALLOWLIST, domains, emptySet()))
-        assertTrue(SiteRules.shouldBlock("wikipedia.org", WebsiteMode.ALLOWLIST, domains, emptySet()))
-        assertFalse(SiteRules.shouldBlock(null, WebsiteMode.ALLOWLIST, domains, emptySet()))
+        assertFalse(SiteRules.shouldBlock("old.reddit.com", WebsiteMode.ALLOWLIST, domains, none))
+        assertTrue(SiteRules.shouldBlock("wikipedia.org", WebsiteMode.ALLOWLIST, domains, none))
+        assertFalse(SiteRules.shouldBlock(null, WebsiteMode.ALLOWLIST, domains, none))
     }
 
     @Test
     fun `presets and the custom list are combined`() {
-        val presets = setOf("wikipedia.org")
+        val presets = CompactDomainSet.of(setOf("wikipedia.org"))
         assertTrue(SiteRules.shouldBlock("en.wikipedia.org", WebsiteMode.BLOCKLIST, emptySet(), presets))
         assertFalse(SiteRules.shouldBlock("en.wikipedia.org", WebsiteMode.ALLOWLIST, emptySet(), presets))
         assertFalse(SiteRules.shouldBlock("reddit.com", WebsiteMode.ALLOWLIST, domains, presets))
@@ -65,6 +66,17 @@ class SiteRulesTest {
         val perLookupMicros = (System.nanoTime() - start) / 1_000 / 1_000.0
         assertTrue("took $perLookupMicros us per lookup", perLookupMicros < 50)
         assertEquals(true, SiteRules.matchesAny("x.site1.example", big))
+    }
+
+    @Test
+    fun `preset lookups use the same suffix rules as the custom list`() {
+        val presets = CompactDomainSet.of(domains)
+        listOf("reddit.com", "www.reddit.com", "a.b.c.reddit.com", "edition.news.google.com").forEach {
+            assertTrue(it, SiteRules.matchesAny(it, presets))
+        }
+        listOf("google.com", "notreddit.com", "reddit.com.evil.net", "com", "reddit", "").forEach {
+            assertFalse(it, SiteRules.matchesAny(it, presets))
+        }
     }
 
     @Test

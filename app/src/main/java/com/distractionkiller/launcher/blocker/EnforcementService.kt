@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
-import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -47,8 +46,14 @@ import kotlinx.coroutines.launch
  *
  * Everything here runs on the main thread, per AccessibilityService's
  * contract, so the expensive PackageManager work is done in [reload] on IO and
- * cached. Per-event work is a handful of in-memory lookups plus, for windows
- * that might carry a URL or a locked screen, a bounded walk of the node tree.
+ * cached.
+ *
+ * The cost to watch is the tree walk. Every node fetched is a binder call
+ * answered on the inspected app's own UI thread, and content-changed events
+ * arrive continuously while any app scrolls. So most events end in a few
+ * in-memory lookups (see [InspectionPolicy]); only windows that can carry a URL
+ * or a locked screen are walked, each at most once per inspection, within a node
+ * and depth budget.
  */
 class EnforcementService : AccessibilityService() {
 
@@ -70,16 +75,32 @@ class EnforcementService : AccessibilityService() {
     @Volatile private var visibleCache: Set<String>? = null
 
     /** Union of every enabled preset for the current website mode. */
-    @Volatile private var presetDomains: Set<String> = emptySet()
+    @Volatile private var presetDomains: CompactDomainSet = CompactDomainSet.EMPTY
+
+    /**
+     * Bumped on each reload request. Two quick toggles start two loads, and
+     * without this the slower, older one could finish last and put stale
+     * domains back.
+     */
+    @Volatile private var presetGeneration = 0
 
     private var lastHomeAt = 0L
     private var lastBackAt = 0L
     private var lastToastAt = 0L
     private var lastBlockedKey: String? = null
     private var lastBlockedAt = 0L
-    private var lastInspectionAt = 0L
+    private var lastFastInspectionAt = 0L
     private var lastSlowInspectionAt = 0L
+    private var lastSweepAt = 0L
     private var retriedInspectionFor: String? = null
+
+    /** What earlier inspections learned per window; see [WindowMemo]. */
+    private val windowMemo = WindowMemo()
+    private val addressBarIds = AddressBarIds()
+    private val nodeAccess = AccessibilityNodeAccess()
+
+    /** Set by [checkWebContent] when it walked a window: whether a page was found in it. */
+    private var scanSawWebView: Boolean? = null
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in Prefs.ENFORCEMENT_KEYS) visibleCache = null
@@ -97,8 +118,10 @@ class EnforcementService : AccessibilityService() {
      */
     private val verifyForeground = Runnable {
         runCatching {
-            val front = rootInActiveWindow?.packageName?.toString() ?: return@runCatching
-            if (front != packageName && shouldSendHome(front)) {
+            val root = rootInActiveWindow
+            val front = root?.packageName?.toString()
+            root?.recycleCompat()
+            if (front != null && front != packageName && shouldSendHome(front)) {
                 lastHomeAt = 0L
                 goHome()
             }
@@ -111,6 +134,10 @@ class EnforcementService : AccessibilityService() {
         appRepository = AppRepository(this)
         presets = WebsitePresets(this)
         appLabel = getString(R.string.app_name)
+        // Window ids and the learned address-bar ids belong to the previous
+        // connection; the system may have reused or dropped any of them.
+        windowMemo.clear()
+        addressBarIds.clear()
         prefs.registerListener(prefsListener)
         ContextCompat.registerReceiver(
             this,
@@ -149,10 +176,14 @@ class EnforcementService : AccessibilityService() {
             when (event.eventType) {
                 AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                     retriedInspectionFor = null
-                    if (isApplicationWindow(event) && enforceApp(packageName)) return
-                    inspectWindow(packageName, force = true)
+                    // The in-memory test goes first: isApplicationWindow reads the
+                    // window list over binder, and nearly every window belongs to
+                    // an app that is allowed.
+                    if (shouldSendHome(packageName) && isApplicationWindow(event) && bounceHiddenApp(packageName)) return
+                    inspectWindow(packageName, event.windowId, stateChange = true)
                 }
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> inspectWindow(packageName, force = false)
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ->
+                    inspectWindow(packageName, event.windowId, stateChange = false)
                 else -> Unit
             }
         }.onFailure { Log.w(TAG, "Event handling failed", it) }
@@ -168,9 +199,13 @@ class EnforcementService : AccessibilityService() {
      */
     private fun isApplicationWindow(event: AccessibilityEvent): Boolean {
         if (event.className?.toString() == SOFT_INPUT_WINDOW) return false
-        val window = runCatching { windows.firstOrNull { it.id == event.windowId } }.getOrNull()
-            ?: return true
-        return window.type == AccessibilityWindowInfo.TYPE_APPLICATION && !window.isInPictureInPictureMode
+        val all = runCatching { windows }.getOrNull() ?: return true
+        try {
+            val window = all.firstOrNull { it.id == event.windowId } ?: return true
+            return window.type == AccessibilityWindowInfo.TYPE_APPLICATION && !window.isInPictureInPictureMode
+        } finally {
+            all.forEach { it.recycleCompat() }
+        }
     }
 
     private fun shouldSendHome(packageName: String): Boolean = AppEnforcement.shouldSendHome(
@@ -181,8 +216,8 @@ class EnforcementService : AccessibilityService() {
         exemptPackages = exempt,
     )
 
-    private fun enforceApp(packageName: String): Boolean {
-        if (!shouldSendHome(packageName)) return false
+    /** Caller has already established [shouldSendHome]. Returns false if the app turned out to be the new home. */
+    private fun bounceHiddenApp(packageName: String): Boolean {
         // A launcher that has just won the home role is where Home now leads.
         // Bouncing it would loop; exempt it on the spot and log the takeover.
         if (packageName in homeApps) {
@@ -202,138 +237,219 @@ class EnforcementService : AccessibilityService() {
 
     // --------------------------------------------- 2. sites and 3. lock
 
-    /**
-     * Decides whether a window is worth walking and how often. Browsers and
-     * lockable system windows are inspected every [INSPECT_INTERVAL_MS]; any
-     * other app is walked only on a window change and every
-     * [SLOW_INSPECT_INTERVAL_MS], which is enough to catch an in-app browser
-     * without taxing a chat list that is being scrolled.
-     */
-    private fun inspectWindow(packageName: String, force: Boolean) {
-        if (packageName in NEVER_INSPECT) return
-        val isBrowser = packageName in browsers
-        val isLockable = SettingsLockDetector.isLockablePackage(packageName)
-        val webFiltering = prefs.siteBlockingEnabled
-        if (!isBrowser && !isLockable && !webFiltering) return
+    /** What the website rules are, read once per inspection that gets as far as needing them. */
+    private class WebRules(val mode: WebsiteMode, val custom: Set<String>, val presets: CompactDomainSet)
 
-        val now = SystemClock.uptimeMillis()
-        if (!force) {
-            if (isBrowser || isLockable) {
-                if (now - lastInspectionAt < INSPECT_INTERVAL_MS) return
-                lastInspectionAt = now
-            } else {
-                if (now - lastSlowInspectionAt < SLOW_INSPECT_INTERVAL_MS) return
-                lastSlowInspectionAt = now
-            }
+    /** Null when there is nothing to enforce, in which case no node is ever fetched for it. */
+    private fun currentWebRules(): WebRules? {
+        if (!prefs.siteBlockingEnabled) return null
+        val mode = prefs.websiteMode
+        val custom = prefs.websiteListFor(mode)
+        val preset = presetDomains
+        if (custom.isEmpty() && preset.isEmpty()) return null
+        return WebRules(mode, custom, preset)
+    }
+
+    /**
+     * Decides whether a window is worth walking and how often; the rules are in
+     * [InspectionPolicy]. In short: browsers and lockable system windows are
+     * checked every [InspectionPolicy.FAST_INTERVAL_MS] because the user is
+     * navigating them; any other app is walked when its window opens and then
+     * only if it was found to host a web page, so scrolling a feed or a chat
+     * costs nothing here.
+     *
+     * Everything that can say "nothing to do" is tested before the first node is
+     * requested, because the window root itself is already a binder call.
+     */
+    private fun inspectWindow(packageName: String, windowId: Int, stateChange: Boolean) {
+        if (packageName in NEVER_INSPECT) return
+        val kind = when {
+            SettingsLockDetector.isLockablePackage(packageName) -> WindowKind.LOCKABLE
+            packageName in browsers -> WindowKind.BROWSER
+            else -> WindowKind.OTHER
         }
 
-        val roots = windowRootsFor(packageName)
+        val now = SystemClock.uptimeMillis()
+        val known = windowMemo.find(windowId, packageName)
+        if (!InspectionPolicy.shouldInspect(kind, stateChange, known, now, lastFastInspectionAt, lastSlowInspectionAt)) return
+
+        val lockActive = kind == WindowKind.LOCKABLE && lockStandsGuard(packageName)
+        val rules = if (kind == WindowKind.LOCKABLE) null else currentWebRules()
+        if (!lockActive && rules == null) return
+
+        if (!stateChange) {
+            if (kind == WindowKind.OTHER) lastSlowInspectionAt = now else lastFastInspectionAt = now
+        }
+
+        val roots = rootsFor(packageName, windowId, now)
         if (roots.isEmpty()) {
             // rootInActiveWindow is often null right after a window change.
             // One retry so a static screen with no follow-up content events
             // still gets judged.
-            if (force && retriedInspectionFor != packageName) {
+            if (stateChange && retriedInspectionFor != packageName) {
                 retriedInspectionFor = packageName
-                handler.postDelayed({ runCatching { inspectWindow(packageName, force = true) } }, 300)
+                handler.postDelayed(
+                    { runCatching { inspectWindow(packageName, windowId, stateChange = true) } },
+                    300,
+                )
             }
             return
         }
         retriedInspectionFor = null
 
-        for (root in roots) {
-            if (isLockable) {
-                if (checkLockedScreen(packageName, root)) return
-                continue
+        scanSawWebView = null
+        try {
+            for (root in roots) {
+                if (lockActive) {
+                    if (checkLockedScreen(packageName, root)) return
+                    continue
+                }
+                if (rules != null && checkWebContent(packageName, root, kind == WindowKind.BROWSER, rules, stateChange, now)) return
             }
-            if (webFiltering && checkWebContent(packageName, root, isBrowser)) return
+            val sawWebView = scanSawWebView
+            if (kind == WindowKind.OTHER && roots.size == 1 && sawWebView != null) {
+                windowMemo.record(
+                    windowId,
+                    packageName,
+                    if (sawWebView) WindowVerdict.HAS_WEBVIEW else WindowVerdict.NO_WEBVIEW,
+                    now,
+                )
+            }
+        } finally {
+            roots.forEach { it.recycleCompat() }
         }
     }
 
     /**
-     * Every window on screen that belongs to [packageName]. Reading the
-     * window list (rather than only the focused one) is what makes a browser
-     * in the unfocused half of split-screen judgeable, and it also guards
-     * against walking some other app's tree under this package's name.
+     * The root of the window that raised the event. The focused window is one
+     * binder call and is the answer almost every time. Only when the event came
+     * from some other window (the unfocused half of split-screen, a dialog over
+     * the activity, a keyboard) is the window list read, and then only that one
+     * window's root is fetched. That keeps a browser in the unfocused pane
+     * judgeable, and it also guards against walking some other app's tree under
+     * this package's name.
      */
-    private fun windowRootsFor(packageName: String): List<AccessibilityNodeInfo> {
-        val roots = ArrayList<AccessibilityNodeInfo>(2)
-        runCatching { windows }.getOrNull()?.forEach { window ->
-            if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) return@forEach
-            val root = runCatching { window.root }.getOrNull() ?: return@forEach
-            if (root.packageName?.toString() == packageName) roots.add(root)
+    private fun rootsFor(packageName: String, windowId: Int, now: Long): List<AccessibilityNodeInfo> {
+        val active = rootInActiveWindow
+        if (active != null &&
+            InspectionPolicy.activeRootAnswers(windowId, active.windowId, packageName, active.packageName?.toString())
+        ) {
+            return listOf(active)
         }
-        if (roots.isEmpty()) {
-            rootInActiveWindow?.takeIf { it.packageName?.toString() == packageName }?.let(roots::add)
+        val roots = rootsFromWindowList(packageName, windowId, now)
+        // An event with no window id cannot be matched to a window; settle for
+        // the focused one if it is at least this package's.
+        if (roots.isEmpty() && windowId < 0 && active != null && active.packageName?.toString() == packageName) {
+            roots.add(active)
+        } else {
+            active?.recycleCompat()
+        }
+        return roots
+    }
+
+    private fun rootsFromWindowList(packageName: String, windowId: Int, now: Long): ArrayList<AccessibilityNodeInfo> {
+        val roots = ArrayList<AccessibilityNodeInfo>(2)
+        val all = runCatching { windows }.getOrNull() ?: return roots
+        try {
+            for (window in all) {
+                if (windowId >= 0 && window.id != windowId) continue
+                if (window.type != AccessibilityWindowInfo.TYPE_APPLICATION) {
+                    // A keyboard or overlay. Its type cannot change, so remember
+                    // that and skip every later event from it without a lookup.
+                    // Lockable packages are never skipped (see InspectionPolicy).
+                    if (windowId >= 0 && !SettingsLockDetector.isLockablePackage(packageName)) {
+                        windowMemo.record(windowId, packageName, WindowVerdict.NOT_INSPECTABLE, now)
+                    }
+                    continue
+                }
+                val root = runCatching { window.root }.getOrNull() ?: continue
+                if (root.packageName?.toString() == packageName) roots.add(root) else root.recycleCompat()
+            }
+        } finally {
+            all.forEach { it.recycleCompat() }
         }
         return roots
     }
 
     // ------------------------------------------------------------ sites
 
-    private fun checkWebContent(packageName: String, root: AccessibilityNodeInfo, isBrowser: Boolean): Boolean {
-        val mode = prefs.websiteMode
-        val custom = prefs.websiteListFor(mode)
-        // Blocklist with nothing on it is a no-op. Allowlist with nothing on
-        // it would block the whole web, which is only ever a mistake.
-        if (custom.isEmpty() && presetDomains.isEmpty()) return false
+    /** Walks [root] at most once, however many of the checks below want its contents. */
+    private inner class LazyScan(private val root: AccessibilityNodeInfo, private val isBrowser: Boolean) {
+        private var scan: UrlScan? = null
 
-        val found = findUrlView(packageName, root, isBrowser)
-        if (found == null) {
-            // A browser window with a page but no address bar at all: an
-            // installed PWA, a Trusted Web Activity, fullscreen. There is no
-            // host to check, so in allowlist mode it is not on the list.
-            if (isBrowser && mode == WebsiteMode.ALLOWLIST && hasLargeWebView(root)) {
-                act(root, key = "no-address-bar")
-                toast(getString(R.string.toast_site_blocked, "page"))
-                return true
-            }
-            return false
-        }
-        val bar = found
-        // While the user is typing, the bar holds half a URL. Judging that
-        // would make every keystroke in allowlist mode a Back press. The page
-        // is judged once it loads and the bar gives up focus.
-        if (bar.isAddressBar && bar.focused) return false
+        val isReady: Boolean get() = scan != null
 
-        val text = if (bar.showingHint) "" else bar.text
-        val host = UrlMatcher.hostOf(text)
-        val block = when {
-            host != null -> {
-                // A bare name in ordinary text ("Booking.com" in a sender
-                // line next to a mail body) is only trusted in blocklist
-                // mode, where it can at most block what you listed. In
-                // allowlist mode it has to look like a URL.
-                val trusted = bar.isAddressBar || mode == WebsiteMode.BLOCKLIST || UrlMatcher.looksLikeUrl(text)
-                trusted && SiteRules.shouldBlock(host, mode, custom, presetDomains)
-            }
-            // A real address bar showing a non-host page (data:, file:,
-            // view-source:, chrome://) is a page too, and in allowlist mode it
-            // is not on the list. Search queries also sit in the bar on a
-            // results page, so only scheme-like text (it keeps a colon)
-            // counts, and the browser's own new-tab states never do.
-            bar.isAddressBar && mode == WebsiteMode.ALLOWLIST ->
-                text.contains(':') && !UrlMatcher.isBrowserInternal(text)
-            else -> false
-        }
-        if (block) {
-            act(root, key = host ?: text.toString())
-            toast(getString(R.string.toast_site_blocked, host ?: "page"))
-            return true
-        }
-        // Blocklist mode: the address bar may be clean while a preview sheet
-        // or panel shows another page's host; a plain host on screen outside
-        // the web content is still worth a look.
-        if (isBrowser && bar.isAddressBar && mode == WebsiteMode.BLOCKLIST) {
-            val walk = UrlWalk()
-            walkForUrl(root, walk, NODE_BUDGET)
-            val plainHost = walk.plain?.let { UrlMatcher.hostOf(nodeText(it)) }
-            if (plainHost != null && plainHost != host && SiteRules.shouldBlock(plainHost, mode, custom, presetDomains)) {
-                act(root, key = plainHost)
-                toast(getString(R.string.toast_site_blocked, plainHost))
-                return true
+        fun get(): UrlScan = scan ?: run {
+            nodeAccess.minWebViewHeightPx = resources.displayMetrics.heightPixels * 2 / 5
+            val limits = if (isBrowser) InspectionPolicy.BROWSER_LIMITS else InspectionPolicy.GENERIC_LIMITS
+            UrlScanner.scan(root, nodeAccess, limits).also {
+                scan = it
+                scanSawWebView = it.webViewSeen
             }
         }
-        return false
+    }
+
+    private fun checkWebContent(
+        packageName: String,
+        root: AccessibilityNodeInfo,
+        isBrowser: Boolean,
+        rules: WebRules,
+        stateChange: Boolean,
+        now: Long,
+    ): Boolean {
+        val lazyScan = LazyScan(root, isBrowser)
+        // A browser's address bar is found by id in one call; only if that fails
+        // is the tree walked, and that walk then answers every other question too.
+        val view = (if (isBrowser) addressBarById(packageName, root) else null)
+            ?: lazyScan.get().best(isBrowser)
+
+        val block = SiteVerdict.judge(
+            view = view,
+            isBrowser = isBrowser,
+            mode = rules.mode,
+            custom = rules.custom,
+            presets = rules.presets,
+            webViewShown = { lazyScan.get().webViewSeen },
+            plainHost = {
+                // The sweep needs the whole tree. Answer from a walk that has
+                // already happened; otherwise do one only when it is due, since
+                // the address bar (a single call) is what is checked every time.
+                if (lazyScan.isReady || stateChange || InspectionPolicy.sweepDue(now, lastSweepAt)) {
+                    if (!lazyScan.isReady) lastSweepAt = now
+                    lazyScan.get().plain?.host
+                } else {
+                    null
+                }
+            },
+        ) ?: return false
+
+        act(root, key = block.key)
+        toast(getString(R.string.toast_site_blocked, block.label))
+        return true
+    }
+
+    /** One binder call per id tried, the id that matched last time first. */
+    private fun addressBarById(packageName: String, root: AccessibilityNodeInfo): UrlCandidate? {
+        for (id in addressBarIds.orderFor(packageName)) {
+            val matches = root.findAccessibilityNodeInfosByViewId(id).orEmpty()
+            val node = matches.firstOrNull()
+            val candidate = node?.let {
+                val text = nodeAccess.displayText(it)
+                UrlCandidate(
+                    text = text ?: "",
+                    host = text?.let { shown -> UrlMatcher.hostOf(shown) },
+                    isAddressBar = true,
+                    focused = it.isFocused,
+                    showingHint = it.isShowingHintText,
+                )
+            }
+            matches.forEach { it.recycleCompat() }
+            if (candidate != null) {
+                addressBarIds.remember(packageName, id)
+                return candidate
+            }
+        }
+        return null
     }
 
     /**
@@ -342,122 +458,28 @@ class EnforcementService : AccessibilityService() {
      * form in some other app. An unfocused window goes straight Home.
      */
     private fun act(root: AccessibilityNodeInfo, key: String) {
-        val active = runCatching { root.window?.isActive }.getOrNull() ?: true
+        val window = runCatching { root.window }.getOrNull()
+        val active = runCatching { window?.isActive }.getOrNull() ?: true
+        window?.recycleCompat()
         if (active) escalate(key) else goHome()
     }
 
-    private fun hasLargeWebView(root: AccessibilityNodeInfo): Boolean {
-        val walk = UrlWalk()
-        walkForUrl(root, walk, NODE_BUDGET)
-        return walk.webViewSeen
-    }
+    // ------------------------------------------------------------- lock
 
-    private class UrlView(
-        val text: CharSequence,
-        /** True for a proper address bar (known id, URL-ish id, or editable). */
-        val isAddressBar: Boolean,
-        val focused: Boolean,
-        val showingHint: Boolean,
-    )
-
-    /**
-     * Finds the on-screen URL, wherever this window keeps it.
-     *
-     * Order: known address-bar ids (every Chromium browser uses "url_bar";
-     * Firefox "mozac_browser_toolbar_url_view"; the rest are best guesses),
-     * then any node whose id looks like a URL field, then any editable field
-     * holding a host, then any plain text holding a host outside the web
-     * content itself. That last rule is what catches in-app browsers and
-     * Custom Tabs, which show the domain in an ordinary TextView. Text inside
-     * a WebView is never considered, so a page that merely mentions
-     * "reddit.com" cannot trigger a block, and a non-browser window is only
-     * judged at all if it actually contains a WebView.
-     */
-    private fun findUrlView(packageName: String, root: AccessibilityNodeInfo, isBrowser: Boolean): UrlView? {
-        if (isBrowser) {
-            for (idSuffix in ADDRESS_BAR_IDS) {
-                val node = root.findAccessibilityNodeInfosByViewId("$packageName:id/$idSuffix").firstOrNull()
-                    ?: continue
-                return UrlView(
-                    text = nodeText(node) ?: "",
-                    isAddressBar = true,
-                    focused = node.isFocused,
-                    showingHint = node.isShowingHintText,
-                )
-            }
-        }
-
-        val walk = UrlWalk()
-        walkForUrl(root, walk, NODE_BUDGET)
-        if (!isBrowser && !walk.webViewSeen) return null
-        // A URL-ish id without a host only counts in a real browser, where
-        // an empty editable bar is meaningful (new tab). Elsewhere it is a
-        // search box or a login field and says nothing about the page.
-        val idMatch = walk.idMatch?.takeIf { isBrowser || UrlMatcher.hostOf(nodeText(it)) != null }
-        val node = idMatch ?: walk.editable ?: walk.plain ?: return null
-        return UrlView(
-            text = nodeText(node) ?: "",
-            isAddressBar = node !== walk.plain,
-            focused = node.isFocused,
-            showingHint = node.isShowingHintText,
+    /** Whether the Settings lock has anything to enforce right now; see [SettingsLockDetector.shouldCheck]. */
+    private fun lockStandsGuard(packageName: String): Boolean {
+        val nowElapsed = SystemClock.elapsedRealtime()
+        return SettingsLockDetector.shouldCheck(
+            lockEnabled = prefs.lockSystemSettings,
+            packageName = packageName,
+            nowElapsed = nowElapsed,
+            suppressUntilElapsed = suppressSettingsLockUntilElapsed,
+            unlocked = { prefs.isSettingsUnlocked(nowElapsed) },
         )
     }
 
-    private class UrlWalk {
-        var webViewSeen = false
-        var idMatch: AccessibilityNodeInfo? = null
-        var editable: AccessibilityNodeInfo? = null
-        var plain: AccessibilityNodeInfo? = null
-    }
-
-    private fun walkForUrl(node: AccessibilityNodeInfo?, walk: UrlWalk, budget: Int): Int {
-        if (node == null || budget <= 0) return budget
-        if (node.className?.toString() == WEB_VIEW) {
-            // An ad banner is a WebView too. Only a WebView that takes up a
-            // real share of the screen marks this window as showing a page.
-            val bounds = Rect()
-            node.getBoundsInScreen(bounds)
-            if (bounds.height() >= resources.displayMetrics.heightPixels * 2 / 5) walk.webViewSeen = true
-            return budget - 1 // do not descend into page content
-        }
-        val id = node.viewIdResourceName
-        val text = nodeText(node)
-        val hostLike = text != null && UrlMatcher.hostOf(text) != null
-        when {
-            id != null && (hostLike || node.isEditable) &&
-                URL_VIEW_ID_HINTS.any { id.contains(it, ignoreCase = true) } ->
-                if (walk.idMatch == null) walk.idMatch = node
-            node.isEditable && hostLike -> if (walk.editable == null) walk.editable = node
-            hostLike -> if (walk.plain == null) walk.plain = node
-        }
-        var remaining = budget - 1
-        for (i in 0 until node.childCount) {
-            if (remaining <= 0) break
-            remaining = walkForUrl(node.getChild(i), walk, remaining)
-        }
-        return remaining
-    }
-
-    private fun nodeText(node: AccessibilityNodeInfo): CharSequence? =
-        node.text?.takeIf { it.isNotBlank() } ?: node.contentDescription?.takeIf { it.isNotBlank() }
-
-    // ------------------------------------------------------------- lock
-
     private fun checkLockedScreen(packageName: String, root: AccessibilityNodeInfo): Boolean {
-        if (!prefs.lockSystemSettings) return false
-        val nowElapsed = SystemClock.elapsedRealtime()
-        // Our own permission prompt is drawn by PermissionController and
-        // names this app; HomeActivity announces it before asking. The grace
-        // covers only the dialog packages, never the Settings app itself.
-        if (nowElapsed < suppressSettingsLockUntilElapsed &&
-            packageName in SettingsLockDetector.ROLE_DIALOG_PACKAGES
-        ) {
-            return false
-        }
-        if (prefs.isSettingsUnlocked(nowElapsed)) return false
-
-        val texts = ArrayList<CharSequence?>()
-        collectTexts(root, texts, NODE_BUDGET)
+        val texts = TextScanner.collect(root, nodeAccess, InspectionPolicy.LOCK_LIMITS).texts
         val locked = SettingsLockDetector.isLockedScreen(
             packageName = packageName,
             windowTexts = texts,
@@ -493,18 +515,6 @@ class EnforcementService : AccessibilityService() {
         return clicked
     }
 
-    private fun collectTexts(node: AccessibilityNodeInfo?, into: MutableList<CharSequence?>, budget: Int): Int {
-        if (node == null || budget <= 0) return budget
-        into.add(node.text)
-        into.add(node.contentDescription)
-        var remaining = budget - 1
-        for (i in 0 until node.childCount) {
-            if (remaining <= 0) break
-            remaining = collectTexts(node.getChild(i), into, remaining)
-        }
-        return remaining
-    }
-
     // ---------------------------------------------------------- helpers
 
     /** Back once; Home if the same thing is still there a moment later. */
@@ -531,13 +541,15 @@ class EnforcementService : AccessibilityService() {
     }
 
     private fun reloadPresets() {
+        val generation = ++presetGeneration
         scope.launch {
             runCatching {
-                presetDomains = if (prefs.siteBlockingEnabled) {
+                val loaded = if (prefs.siteBlockingEnabled) {
                     presets.loadEnabledDomains(prefs.websiteMode, prefs.enabledWebsitePresets)
                 } else {
-                    emptySet()
+                    CompactDomainSet.EMPTY
                 }
+                if (generation == presetGeneration) presetDomains = loaded
             }.onFailure { Log.w(TAG, "Preset reload failed", it) }
         }
     }
@@ -590,10 +602,6 @@ class EnforcementService : AccessibilityService() {
         private const val ACTION_INTERVAL_MS = 600L
         private const val TOAST_INTERVAL_MS = 2_500L
         private const val STUCK_WINDOW_MS = 2_000L
-        private const val INSPECT_INTERVAL_MS = 300L
-        private const val SLOW_INSPECT_INTERVAL_MS = 1_200L
-        private const val NODE_BUDGET = 500
-        private const val WEB_VIEW = "android.webkit.WebView"
         private const val SOFT_INPUT_WINDOW = "android.inputmethodservice.SoftInputWindow"
 
         /** Windows that never carry a URL or a lockable screen; not worth a walk. */
@@ -610,19 +618,5 @@ class EnforcementService : AccessibilityService() {
          * dialog would otherwise be treated as a locked screen.
          */
         @Volatile var suppressSettingsLockUntilElapsed: Long = 0L
-
-        val ADDRESS_BAR_IDS = listOf(
-            "url_bar",                          // Chrome, Brave, Edge, Vivaldi, Kiwi and other Chromium forks
-            "mozac_browser_toolbar_url_view",   // Firefox, Firefox Focus
-            "location_bar_edit_text",           // Samsung Internet (unverified)
-            "url_field",                        // Opera (unverified)
-            "omnibarTextInput",                 // DuckDuckGo (unverified)
-        )
-
-        /** Substrings of view ids that mark a URL display in any app. */
-        val URL_VIEW_ID_HINTS = listOf(
-            "url_bar", "urlbar", "url_view", "url_text", "url_field", "omnibox", "omnibar",
-            "address_bar", "addressbar", "location_bar", "locationbar",
-        )
     }
 }

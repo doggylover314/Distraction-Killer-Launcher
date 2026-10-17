@@ -116,4 +116,55 @@ class SettingsLockDetectorTest {
         assertFalse(SettingsLockDetector.isHomeChooser("android", listOf("Share with", label), label))
         assertFalse(SettingsLockDetector.isHomeChooser("com.android.settings", listOf("Home app", label), label))
     }
+
+    // ------------------------------------------------- the pre-walk guard
+
+    private fun guard(
+        enabled: Boolean = true,
+        pkg: String = "com.android.settings",
+        now: Long = 1_000L,
+        suppressUntil: Long = 0L,
+        unlocked: Boolean = false,
+        onUnlockedAsked: () -> Unit = {},
+    ) = SettingsLockDetector.shouldCheck(enabled, pkg, now, suppressUntil) {
+        onUnlockedAsked()
+        unlocked
+    }
+
+    @Test
+    fun `the lock looks at a window only when it is on and not unlocked`() {
+        assertTrue(guard())
+        assertFalse(guard(enabled = false))
+        assertFalse(guard(unlocked = true))
+    }
+
+    @Test
+    fun `a disabled lock never reads the unlock state`() {
+        var asked = 0
+        guard(enabled = false) { asked++ }
+        assertTrue(asked == 0)
+    }
+
+    @Test
+    fun `the permission-prompt grace covers the dialog packages and never Settings itself`() {
+        val grace = 5_000L
+        assertFalse(guard(pkg = "com.google.android.permissioncontroller", now = 1_000L, suppressUntil = grace))
+        assertFalse(guard(pkg = "android", now = 1_000L, suppressUntil = grace))
+        assertTrue(guard(pkg = "com.android.settings", now = 1_000L, suppressUntil = grace))
+        assertTrue(guard(pkg = "com.android.vending", now = 1_000L, suppressUntil = grace))
+        // Grace over.
+        assertTrue(guard(pkg = "com.google.android.permissioncontroller", now = 5_000L, suppressUntil = grace))
+    }
+
+    @Test
+    fun `the timed unlock window opens and closes at its edges`() {
+        assertTrue(SettingsLockDetector.isUnlocked(grantedAtElapsed = 100L, untilElapsed = 400L, nowElapsed = 100L))
+        assertTrue(SettingsLockDetector.isUnlocked(100L, 400L, 399L))
+        assertFalse(SettingsLockDetector.isUnlocked(100L, 400L, 400L))
+        // A reboot restarts elapsed time at zero, before the grant.
+        assertFalse(SettingsLockDetector.isUnlocked(100L, 400L, 50L))
+        // While unlocked the guard stands down, so the window costs nothing to walk.
+        assertFalse(guard(unlocked = SettingsLockDetector.isUnlocked(100L, 400L, 200L)))
+        assertTrue(guard(unlocked = SettingsLockDetector.isUnlocked(100L, 400L, 400L)))
+    }
 }
