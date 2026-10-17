@@ -230,7 +230,9 @@ fun ProtectedSettingsScreen(
             }
             item {
                 Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                    if (unlockGrantedAt <= nowElapsed && nowElapsed < unlockedUntil) {
+                    // Same test the service enforces with, so a window left over from
+                    // before a reboot is not shown as open.
+                    if (unlockGrantedAt <= nowElapsed && nowElapsed < unlockedUntil && prefs.isSettingsUnlocked(nowElapsed)) {
                         // Rounded up, so a fresh 10 min grant reads "10", not "11".
                         val minutesLeft = (unlockedUntil - nowElapsed + 59_999L) / 60_000L
                         InfoText("Android Settings changes allowed for about $minutesLeft min.", highlighted = true)

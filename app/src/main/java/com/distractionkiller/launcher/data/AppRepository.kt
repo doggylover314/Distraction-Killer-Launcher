@@ -58,8 +58,13 @@ class AppRepository(context: Context) {
         runCatching {
             val launcherApps = appContext.getSystemService(LauncherApps::class.java) ?: return@runCatching
             val userManager = appContext.getSystemService(UserManager::class.java) ?: return@runCatching
+            // One profile that throws (a locked Secure Folder, say) must not
+            // drop the profiles after it: a package missing here is never
+            // sent home.
             userManager.userProfiles.forEach { profile ->
-                launcherApps.getActivityList(null, profile).mapTo(result) { it.applicationInfo.packageName }
+                runCatching {
+                    launcherApps.getActivityList(null, profile).mapTo(result) { it.applicationInfo.packageName }
+                }
             }
         }
         return result

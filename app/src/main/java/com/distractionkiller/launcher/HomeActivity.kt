@@ -29,6 +29,7 @@ import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.Prefs
 import com.distractionkiller.launcher.ui.HomeScreen
 import com.distractionkiller.launcher.ui.HomeUiConfig
+import com.distractionkiller.launcher.ui.rememberCurrentTime
 import com.distractionkiller.launcher.ui.SetPasswordScreen
 import com.distractionkiller.launcher.ui.theme.DistractionKillerTheme
 import com.distractionkiller.launcher.ui.theme.windowThemeResId
@@ -142,19 +143,29 @@ private fun HomeRoute(
     // the current preferences. Not in the effect below, because an effect only
     // starts after the first frame, so a resumed screen would paint the old
     // list (or a loading hint) for a frame before correcting itself.
-    val warmApps = remember(refreshKey) { warmVisibleApps(prefs, context.packageName) }
+    val warmInstalled = remember(refreshKey) { warmInstalledApps(prefs) }
 
-    // What the cold path last produced, or last saw warm. It stays on screen
-    // while a stale cache reloads, and after a reload fails.
-    var lastApps by remember { mutableStateOf(warmApps ?: emptyList<LaunchableApp>()) }
-    var isLoading by remember { mutableStateOf(warmApps == null) }
-    val apps = warmApps ?: lastApps
+    // The unfiltered list from the warm cache or from the last load that
+    // succeeded. It stays on screen while a stale cache reloads, and after a
+    // reload fails. It is filtered again on every use rather than kept as a
+    // visible list: a Protected change made since that load (hiding an app,
+    // say) must not leave the app tappable on the home screen.
+    var lastInstalled by remember { mutableStateOf(warmInstalled ?: emptyList<LaunchableApp>()) }
+    var isLoading by remember { mutableStateOf(warmInstalled == null) }
+    val apps = remember(refreshKey, warmInstalled, lastInstalled) {
+        visibleApps(warmInstalled ?: lastInstalled, prefs, context.packageName)
+    }
     var weather by remember { mutableStateOf(prefs.cachedWeather) }
     var launchCounter by remember(refreshKey) { mutableStateOf(prefs.launchCounter) }
 
     // Re-read on every resume so changes made in Settings show up immediately.
     val mode = remember(refreshKey) { prefs.mode }
     val config = remember(refreshKey) { HomeUiConfig.from(prefs) }
+
+    // Read here, so HomeRoute recomposes once a minute and the opens-today
+    // counts reset at midnight even on a screen that never pauses. Without a
+    // state read, yesterday's counts stayed on screen until the next resume.
+    val todayKey = rememberCurrentTime().toLocalDate().toString()
 
     var hasLocationPermission by remember(refreshKey) {
         mutableStateOf(weatherRepository.hasLocationPermission())
@@ -168,10 +179,10 @@ private fun HomeRoute(
     }
 
     LaunchedEffect(refreshKey) {
-        if (warmApps != null) {
-            // The screen already shows warmApps; this only remembers them as
+        if (warmInstalled != null) {
+            // The screen already shows warmInstalled; this only remembers it as
             // the fallback for a later failed reload.
-            lastApps = warmApps
+            lastInstalled = warmInstalled
             isLoading = false
             return@LaunchedEffect
         }
@@ -191,7 +202,7 @@ private fun HomeRoute(
                 InstalledApps.load(appRepository)
             }
         }
-            .onSuccess { installed -> lastApps = visibleApps(installed, prefs, context.packageName) }
+            .onSuccess { installed -> lastInstalled = installed }
             .onFailure { error -> Log.w(TAG, "Could not read the installed app list", error) }
         isLoading = false
     }
@@ -220,11 +231,11 @@ private fun HomeRoute(
         resetKey = searchResetKey,
         // Never true on a warm resume, even if an earlier load was cancelled
         // before it could clear the flag.
-        isLoading = isLoading && warmApps == null,
+        isLoading = isLoading && warmInstalled == null,
         weather = weather,
         config = config,
         launchCounts = if (config.showLaunchCounts) {
-            launchCounter.counts.takeIf { launchCounter.dateKey == LocalDate.now().toString() } ?: emptyMap()
+            launchCounter.counts.takeIf { launchCounter.dateKey == todayKey } ?: emptyMap()
         } else {
             emptyMap()
         },
@@ -255,15 +266,15 @@ private fun HomeRoute(
 }
 
 /**
- * The visible list built from the warm cache, or null to take the slow path.
- * Null covers a cold or stale cache, and also a device that has not been
- * seeded yet: seeding needs PackageManager lookups, and in allowlist mode an
- * unseeded list would show an empty home screen until the reload finished.
- * Main-thread safe: preference reads and a filter over an in-memory list.
+ * The cached installed list, or null to take the slow path. Null covers a cold
+ * or stale cache, and also a device that has not been seeded yet: seeding needs
+ * PackageManager lookups, and in allowlist mode an unseeded list would show an
+ * empty home screen until the reload finished.
+ * Main-thread safe: a preference read and a read of an in-memory list.
  */
-private fun warmVisibleApps(prefs: Prefs, selfPackage: String): List<LaunchableApp>? = runCatching {
+private fun warmInstalledApps(prefs: Prefs): List<LaunchableApp>? = runCatching {
     if (!prefs.hasSeededDefaults) return@runCatching null
-    InstalledApps.cached()?.let { visibleApps(it, prefs, selfPackage) }
+    InstalledApps.cached()
 }.getOrNull()
 
 private fun visibleApps(installed: List<LaunchableApp>, prefs: Prefs, selfPackage: String): List<LaunchableApp> =

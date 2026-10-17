@@ -2,10 +2,13 @@ package com.distractionkiller.launcher.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
+import android.provider.Settings
 import androidx.core.content.edit
 import com.distractionkiller.launcher.blocker.SettingsLockDetector
 import com.distractionkiller.launcher.blocker.WebsiteMode
 import com.distractionkiller.launcher.weather.WeatherSnapshot
+import kotlin.math.abs
 
 /**
  * Every persisted setting lives here, in one private SharedPreferences file.
@@ -16,6 +19,8 @@ import com.distractionkiller.launcher.weather.WeatherSnapshot
  *  - Protected: anything that changes what can be reached, password required.
  */
 class Prefs(context: Context) {
+
+    private val appContext: Context = context.applicationContext
 
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(FILE_NAME, Context.MODE_PRIVATE)
@@ -125,15 +130,46 @@ class Prefs(context: Context) {
         get() = prefs.getLong(KEY_SETTINGS_UNLOCKED_UNTIL, 0L)
         set(value) = prefs.edit { putLong(KEY_SETTINGS_UNLOCKED_UNTIL, value) }
 
+    /** Opens the window and records which boot opened it; see [isSettingsUnlocked]. */
     fun grantSettingsUnlock(nowElapsed: Long, durationMillis: Long) {
         prefs.edit {
             putLong(KEY_SETTINGS_UNLOCK_GRANTED, nowElapsed)
             putLong(KEY_SETTINGS_UNLOCKED_UNTIL, nowElapsed + durationMillis)
+            putLong(KEY_SETTINGS_UNLOCK_BOOT, currentBootAnchor())
+            putInt(KEY_SETTINGS_UNLOCK_BOOT_COUNT, currentBootCount())
         }
     }
 
-    fun isSettingsUnlocked(nowElapsed: Long): Boolean =
-        SettingsLockDetector.isUnlocked(settingsUnlockGrantedAtElapsed, settingsUnlockUntilElapsed, nowElapsed)
+    /**
+     * Elapsed time restarts at zero on every reboot, so a window written before
+     * one would keep running into the new boot for as long as its stored
+     * deadline is ahead of the new elapsed time. The window therefore only
+     * counts in the boot that opened it. A changed wall clock can only make
+     * this check fail (closing the window early), never extend it, because the
+     * window itself is still measured in elapsed time.
+     *
+     * The system boot counter is the primary test, because setting the clock
+     * back after a reboot could line the wall-clock anchor up again. The
+     * anchor is the fallback for a device that does not report a boot count.
+     */
+    fun isSettingsUnlocked(nowElapsed: Long): Boolean {
+        val bootCount = currentBootCount()
+        val sameBoot = if (bootCount >= 0) {
+            bootCount == prefs.getInt(KEY_SETTINGS_UNLOCK_BOOT_COUNT, -1)
+        } else {
+            abs(currentBootAnchor() - prefs.getLong(KEY_SETTINGS_UNLOCK_BOOT, 0L)) <= BOOT_ANCHOR_TOLERANCE_MILLIS
+        }
+        return sameBoot &&
+            SettingsLockDetector.isUnlocked(settingsUnlockGrantedAtElapsed, settingsUnlockUntilElapsed, nowElapsed)
+    }
+
+    /** Wall-clock time of boot, estimated as now minus elapsed. Differs between boots by the time the phone was off. */
+    private fun currentBootAnchor(): Long = System.currentTimeMillis() - SystemClock.elapsedRealtime()
+
+    /** Boots since the device was set up, or -1 where the system does not say. */
+    private fun currentBootCount(): Int =
+        runCatching { Settings.Global.getInt(appContext.contentResolver, Settings.Global.BOOT_COUNT, -1) }
+            .getOrDefault(-1)
 
     // ------------------------------------------------------------- password
 
@@ -322,6 +358,7 @@ class Prefs(context: Context) {
                 KEY_WEBSITE_MODE, KEY_WEBSITE_BLOCKLIST, KEY_WEBSITE_ALLOWLIST, KEY_WEBSITE_PRESETS,
                 KEY_SITE_BLOCKING, KEY_ENFORCE_APPS, KEY_LOCK_SETTINGS,
                 KEY_LOCK_KEYWORDS, KEY_SETTINGS_UNLOCKED_UNTIL, KEY_SETTINGS_UNLOCK_GRANTED,
+                KEY_SETTINGS_UNLOCK_BOOT, KEY_SETTINGS_UNLOCK_BOOT_COUNT,
             )
 
         private const val FILE_NAME = "distraction_killer_prefs"
@@ -339,6 +376,11 @@ class Prefs(context: Context) {
         private const val KEY_LOCK_KEYWORDS = "settings_lock_keywords"
         private const val KEY_SETTINGS_UNLOCKED_UNTIL = "settings_unlocked_until_elapsed"
         private const val KEY_SETTINGS_UNLOCK_GRANTED = "settings_unlock_granted_elapsed"
+        private const val KEY_SETTINGS_UNLOCK_BOOT = "settings_unlock_boot_anchor_ms"
+        private const val KEY_SETTINGS_UNLOCK_BOOT_COUNT = "settings_unlock_boot_count"
+
+        /** Slack for wall-clock drift (NTP slewing) between grant and check. A reboot moves the anchor by far more. */
+        private const val BOOT_ANCHOR_TOLERANCE_MILLIS = 5_000L
         private const val KEY_PASSWORD_HASH = "password_hash"
         private const val KEY_PASSWORD_SALT = "password_salt"
         private const val KEY_THEME = "theme_mode"
