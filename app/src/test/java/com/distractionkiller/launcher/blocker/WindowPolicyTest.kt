@@ -48,6 +48,48 @@ class WindowPolicyTest {
     }
 
     @Test
+    fun `a deep page is followed at half the rate of a shallow one`() {
+        // Both hold a page. Only the escalated one needs a wide walk to read,
+        // so only it waits the longer interval.
+        val shallow = entry(WindowVerdict.HAS_WEBVIEW, updatedAt = 0L)
+        val deep = entry(WindowVerdict.HAS_WEBVIEW, updatedAt = 0L).also { it.escalated = true }
+        val justOverSlow = InspectionPolicy.SLOW_INTERVAL_MS + 1
+
+        assertTrue(inspect(WindowKind.OTHER, stateChange = false, known = shallow, now = justOverSlow, lastSlowAt = 0L))
+        assertFalse(inspect(WindowKind.OTHER, stateChange = false, known = deep, now = justOverSlow, lastSlowAt = 0L))
+        assertTrue(
+            inspect(
+                WindowKind.OTHER,
+                stateChange = false,
+                known = deep,
+                now = InspectionPolicy.DEEP_PAGE_INTERVAL_MS,
+                lastSlowAt = 0L,
+            ),
+        )
+    }
+
+    @Test
+    fun `following a deep page never costs more than the walking it replaced`() {
+        // The point of the longer interval: a wide walk at the slow interval
+        // would be dearer per minute than the unconditional generic walking
+        // this change set removed.
+        val deep = entry(WindowVerdict.HAS_WEBVIEW, updatedAt = 0L).also { it.escalated = true }
+        var now = 0L
+        var fetches = 0L
+        var lastSlowAt = -InspectionPolicy.DEEP_PAGE_INTERVAL_MS
+        while (now < 60_000L) {
+            if (inspect(WindowKind.OTHER, stateChange = false, known = deep, now = now, lastSlowAt = lastSlowAt)) {
+                lastSlowAt = now
+                deep.updatedAt = now
+                fetches += InspectionPolicy.BROWSER_LIMITS.maxNodes
+            }
+            now += 600L
+        }
+        val oldBehaviour = (60_000L / InspectionPolicy.SLOW_INTERVAL_MS) * InspectionPolicy.GENERIC_LIMITS.maxNodes
+        assertTrue("deep follow cost $fetches exceeds the old $oldBehaviour", fetches <= oldBehaviour)
+    }
+
+    @Test
     fun `the slow interval still limits a content-change recheck`() {
         val known = entry(WindowVerdict.NO_WEBVIEW, updatedAt = 0L)
         // Another ordinary window was walked 100 ms ago; the budget is shared.

@@ -92,8 +92,8 @@ class EnforcementService : AccessibilityService() {
     private val addressBarIds = AddressBarIds()
     private val nodeAccess = AccessibilityNodeAccess()
 
-    /** Set by [LazyScan] when it walked a window: what that walk found, and whether it read everything. */
-    private var lastScan: UrlScan? = null
+    /** Set by [LazyScan] when it walked a window: what that walk found, and whether it took the wide budget. */
+    private var lastWalk: WindowWalk? = null
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key in Prefs.ENFORCEMENT_KEYS) visibleCache = null
@@ -291,21 +291,26 @@ class EnforcementService : AccessibilityService() {
         }
         retriedInspectionFor = null
 
-        lastScan = null
+        lastWalk = null
+        // The memo holds one verdict per window. The focused-window fallback in
+        // rootsFor can hand back a different window of the same package, and what
+        // that tree holds must not be written against this event's id. The same
+        // test gates escalation: a walk whose outcome cannot be remembered would
+        // be repeated on every look.
+        val remembers = kind == WindowKind.OTHER && windowId >= 0 && roots.size == 1 && roots[0].windowId == windowId
         try {
             for (root in roots) {
                 if (lockActive) {
                     if (checkLockedScreen(packageName, root)) return
                     continue
                 }
-                if (rules != null && checkWebContent(packageName, root, kind == WindowKind.BROWSER, rules, stateChange, now)) return
+                if (rules != null && checkWebContent(packageName, root, kind, rules, stateChange, now, if (remembers) known else null, remembers)) return
             }
-            val scan = lastScan
-            // The verdict describes one window. The focused-window fallback in
-            // rootsFor can hand back a different window of the same package, and
-            // what that tree holds must not be written against this event's id.
-            if (kind == WindowKind.OTHER && scan != null && roots.size == 1 && roots[0].windowId == windowId) {
-                InspectionPolicy.verdictToRecord(scan)?.let { windowMemo.record(windowId, packageName, it, now) }
+            val walk = lastWalk
+            if (remembers && walk != null) {
+                InspectionPolicy.memoUpdate(walk, known)?.let {
+                    windowMemo.record(windowId, packageName, it.verdict, now, it.escalated)
+                }
             }
         } finally {
             roots.forEach { it.recycleCompat() }
@@ -365,30 +370,36 @@ class EnforcementService : AccessibilityService() {
     // ------------------------------------------------------------ sites
 
     /** Walks [root] at most once, however many of the checks below want its contents. */
-    private inner class LazyScan(private val root: AccessibilityNodeInfo, private val isBrowser: Boolean) {
+    private inner class LazyScan(
+        private val root: AccessibilityNodeInfo,
+        private val kind: WindowKind,
+        private val known: WindowMemo.Entry?,
+        private val mayEscalate: Boolean,
+    ) {
         private var scan: UrlScan? = null
 
         val isReady: Boolean get() = scan != null
 
         fun get(): UrlScan = scan ?: run {
             nodeAccess.calibrateFor(root, resources.displayMetrics.heightPixels)
-            val limits = if (isBrowser) InspectionPolicy.BROWSER_LIMITS else InspectionPolicy.GENERIC_LIMITS
-            UrlScanner.scan(root, nodeAccess, limits).also {
-                scan = it
-                lastScan = it
-            }
+            val walk = WindowWalker.walk(root, nodeAccess, kind, known, mayEscalate)
+            lastWalk = walk
+            walk.scan.also { scan = it }
         }
     }
 
     private fun checkWebContent(
         packageName: String,
         root: AccessibilityNodeInfo,
-        isBrowser: Boolean,
+        kind: WindowKind,
         rules: WebRules,
         stateChange: Boolean,
         now: Long,
+        known: WindowMemo.Entry?,
+        mayEscalate: Boolean,
     ): Boolean {
-        val lazyScan = LazyScan(root, isBrowser)
+        val isBrowser = kind == WindowKind.BROWSER
+        val lazyScan = LazyScan(root, kind, known, mayEscalate)
         // A browser's address bar is found by id in one call; only if that fails
         // is the tree walked, and that walk then answers every other question too.
         val view = (if (isBrowser) addressBarById(packageName, root) else null)

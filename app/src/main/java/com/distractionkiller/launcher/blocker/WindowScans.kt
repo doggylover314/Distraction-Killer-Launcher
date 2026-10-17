@@ -134,6 +134,40 @@ internal object UrlScanner {
     )
 }
 
+/** What walking one window produced, and whether it took the wide budget to get it. */
+internal class WindowWalk(val scan: UrlScan, val wide: Boolean)
+
+internal object WindowWalker {
+
+    /**
+     * Walks [root] once, or twice for an ordinary window that does not fit the
+     * generic budget (see [InspectionPolicy.shouldEscalate]). The second walk
+     * happens immediately and not on the window's next look, for two reasons: a
+     * static screen may never raise another event, so a deferred escalation could
+     * simply never happen and the blind spot would stay; and doing it here means
+     * the page is judged in the same inspection that found it. The price is up to
+     * 500 fetches in one event, paid once per window, which is no more than the
+     * browser path pays on every look.
+     *
+     * [mayEscalate] must be false whenever the outcome cannot be remembered (no
+     * window id, or a root that is not the event's window): with nowhere to keep
+     * the flag, nothing would stop the same window being escalated on every look.
+     * [known] is the window's entry, or null when it is not to be consulted.
+     *
+     * Never throws from the escalation: if the wide walk fails, the generic result
+     * stands and is reported as wide, so the failure also counts as the window's
+     * one escalation instead of being retried on every look.
+     */
+    fun <N : Any> walk(root: N, access: NodeAccess<N>, kind: WindowKind, known: WindowMemo.Entry?, mayEscalate: Boolean): WindowWalk {
+        val wide = InspectionPolicy.startsWide(kind, known)
+        val limits = if (wide) InspectionPolicy.BROWSER_LIMITS else InspectionPolicy.GENERIC_LIMITS
+        val first = UrlScanner.scan(root, access, limits)
+        if (!mayEscalate || !InspectionPolicy.shouldEscalate(kind, first, wide, known)) return WindowWalk(first, wide)
+        val second = runCatching { UrlScanner.scan(root, access, InspectionPolicy.BROWSER_LIMITS) }.getOrNull()
+        return WindowWalk(second ?: first, wide = true)
+    }
+}
+
 /** Every visible text in a window, for the Settings lock. */
 internal class TextScan(val texts: List<String>, val stats: TreeWalk.Stats)
 
