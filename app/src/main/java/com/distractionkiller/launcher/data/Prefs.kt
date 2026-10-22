@@ -208,6 +208,10 @@ class Prefs(context: Context) {
         get() = prefs.getBoolean(KEY_DOCK_ENABLED, false)
         set(value) = prefs.edit { putBoolean(KEY_DOCK_ENABLED, value) }
 
+    var dockStyle: DockStyle
+        get() = enumFromStored(prefs.getString(KEY_DOCK_STYLE, null), DockStyle.TEXT)
+        set(value) = prefs.edit { putString(KEY_DOCK_STYLE, value.name) }
+
     /**
      * Ordered package names for the dock. The dock is resolved against the
      * visible app list at render time, so an entry for a hidden or uninstalled
@@ -355,6 +359,7 @@ class Prefs(context: Context) {
         private const val KEY_SHOW_COUNTS = "show_launch_counts"
         private const val KEY_DOCK_ENABLED = "dock_enabled"
         private const val KEY_DOCK_PACKAGES = "dock_packages"
+        private const val KEY_DOCK_STYLE = "dock_style"
         private const val KEY_NOTE_ENABLED = "focus_note_enabled"
         private const val KEY_NOTE_TEXT = "focus_note_text"
         private const val KEY_LOCATION_ASKED = "location_permission_asked"

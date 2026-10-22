@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import com.distractionkiller.launcher.data.AppFilter
 import com.distractionkiller.launcher.data.ClockFormat
 import com.distractionkiller.launcher.data.DockList
+import com.distractionkiller.launcher.data.DockStyle
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.Prefs
 import com.distractionkiller.launcher.data.TextSize
@@ -78,6 +79,7 @@ fun AppearanceSettingsScreen(
     var focusNoteText by remember { mutableStateOf(prefs.focusNoteText) }
     var dockEnabled by remember { mutableStateOf(prefs.dockEnabled) }
     var dockPackages by remember { mutableStateOf(prefs.dockPackages) }
+    var dockStyle by remember { mutableStateOf(prefs.dockStyle) }
 
     val context = LocalContext.current
     // Filtered here, not by the caller: this screen is rebuilt on every return
@@ -294,6 +296,16 @@ fun AppearanceSettingsScreen(
             // The editor, and above all the picker (one row per visible app), is
             // only worth scrolling past for someone who turned the dock on.
             if (dockEnabled) {
+                item {
+                    OptionGroup(
+                        options = listOf(
+                            Triple(DockStyle.TEXT, "Names", "Long names are shortened to keep the dock on one line."),
+                            Triple(DockStyle.ICONS, "Greyscale icons", "App icons with the colour taken out."),
+                        ),
+                        selected = dockStyle,
+                        onSelect = { dockStyle = it; prefs.dockStyle = it },
+                    )
+                }
                 if (loadFailed) {
                     // Not "hidden": the query failed, so nothing is known about
                     // any entry, and nothing here may offer to delete one.

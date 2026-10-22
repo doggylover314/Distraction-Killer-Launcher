@@ -19,7 +19,7 @@
 
 # Keep enum names. Several settings persist as the enum constant name through
 # SharedPreferences (LauncherMode, WebsiteMode, ThemeMode, TextSize,
-# ClockFormat), so an obfuscated name would silently reset a user's choice on
+# ClockFormat, DockStyle), so an obfuscated name would silently reset a user's choice on
 # upgrade and read back as the default.
 -keepclassmembers enum com.distractionkiller.launcher.** {
     public static **[] values();

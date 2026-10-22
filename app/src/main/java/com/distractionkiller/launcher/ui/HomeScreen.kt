@@ -1,15 +1,18 @@
 package com.distractionkiller.launcher.ui
 
+import android.content.Context
+import android.content.pm.PackageManager
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -23,28 +26,41 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.drawable.toBitmap
 import com.distractionkiller.launcher.data.AppFilter
 import com.distractionkiller.launcher.data.DockList
+import com.distractionkiller.launcher.data.DockStyle
 import com.distractionkiller.launcher.data.LaunchableApp
 import com.distractionkiller.launcher.data.LauncherMode
 import com.distractionkiller.launcher.data.TextSize
 import com.distractionkiller.launcher.weather.WeatherSnapshot
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * The home screen: header, a plain text list of app names, an optional text
- * dock, and a way into Settings. No icons, by request, and no
- * wallpaper-dependent chrome.
+ * The home screen: header, a plain text list of app names, an optional dock
+ * (names, or greyscale icons if chosen), and a way into Settings. No icons in
+ * the list, by request, and no wallpaper-dependent chrome.
  *
  * [resetKey] changes whenever the launcher is resumed or Home is pressed again;
  * it throws away the half-typed search so the list is never left filtered.
@@ -163,11 +179,11 @@ fun HomeScreen(
 }
 
 /**
- * Quick-access row. Text only, like the list, and the whole label is the tap
- * target. Cells are sized to their label rather than sharing the width five
- * ways: equal cells cut "Google Maps" to "Googl…" on a 360dp phone and to a
- * single letter at a large system font. When the labels do not fit on one line
- * the row wraps to a second one instead of truncating any of them.
+ * Quick-access row, always exactly one line tall so it never eats into the list
+ * above it. Text mode lays the names out with [DockFit]: names that fit keep
+ * their full width and only the long ones are shortened, by as little as the
+ * row allows. Icon mode draws each app's icon in greyscale, which keeps the
+ * dock recognisable without the colour that makes icons pull at the eye.
  */
 @Composable
 private fun AppDock(
@@ -175,26 +191,127 @@ private fun AppDock(
     config: HomeUiConfig,
     onLaunch: (LaunchableApp) -> Unit,
 ) {
-    FlowRow(
+    when (config.dockStyle) {
+        DockStyle.TEXT -> TextDock(apps, config, onLaunch)
+        DockStyle.ICONS -> IconDock(apps, config, onLaunch)
+    }
+}
+
+@Composable
+private fun TextDock(
+    apps: List<LaunchableApp>,
+    config: HomeUiConfig,
+    onLaunch: (LaunchableApp) -> Unit,
+) {
+    val style = dockLabelStyle(config.textSize)
+    Layout(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-    ) {
-        for (app in apps) {
-            Text(
-                text = app.label,
-                style = dockLabelStyle(config.textSize),
-                color = MaterialTheme.colorScheme.onBackground,
-                // A single name wider than the whole screen is the only thing
-                // left to cut.
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .clickable { onLaunch(app) }
-                    .padding(horizontal = 8.dp, vertical = 14.dp),
-            )
+        content = {
+            for (app in apps) {
+                Text(
+                    text = app.label,
+                    style = style,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .clickable { onLaunch(app) }
+                        .padding(horizontal = 8.dp, vertical = 14.dp),
+                )
+            }
+        },
+    ) { measurables, constraints ->
+        val available = constraints.maxWidth
+        val natural = IntArray(measurables.size) { measurables[it].maxIntrinsicWidth(Constraints.Infinity) }
+        val caps = DockFit.caps(natural, available)
+        val placeables = measurables.mapIndexed { i, m ->
+            m.measure(Constraints(minWidth = 0, maxWidth = caps[i]))
+        }
+        val height = placeables.maxOfOrNull { it.height } ?: 0
+        // Space evenly, like the old row: equal gaps at both ends and between.
+        val free = (available - placeables.sumOf { it.width }).coerceAtLeast(0)
+        val gap = free / (placeables.size + 1)
+        layout(available, height) {
+            var x = gap
+            for (p in placeables) {
+                p.placeRelative(x, (height - p.height) / 2)
+                x += p.width + gap
+            }
         }
     }
+}
+
+@Composable
+private fun IconDock(
+    apps: List<LaunchableApp>,
+    config: HomeUiConfig,
+    onLaunch: (LaunchableApp) -> Unit,
+) {
+    val context = LocalContext.current
+    val sizePx = with(LocalDensity.current) { DOCK_ICON_SIZE.roundToPx() }
+    // Off the main thread: each icon is a PackageManager call plus a drawable
+    // decode. Keyed on the resolved list, which is rebuilt whenever the app
+    // list is, so an updated app's new icon shows up on the next resume.
+    val icons by produceState<Map<String, ImageBitmap>>(emptyMap(), apps, sizePx) {
+        value = withContext(Dispatchers.IO) { loadDockIcons(context, apps, sizePx) }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for (app in apps) {
+            val icon = icons[app.packageName]
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .clickable(onClickLabel = "Open ${app.label}") { onLaunch(app) }
+                    .padding(horizontal = 8.dp, vertical = 10.dp)
+                    .size(DOCK_ICON_SIZE),
+            ) {
+                if (icon != null) {
+                    Image(
+                        bitmap = icon,
+                        contentDescription = app.label,
+                        colorFilter = GREYSCALE,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    // Still loading, or the app has no icon we could read: the
+                    // first letter keeps the slot tappable and identifiable.
+                    Text(
+                        text = app.label.take(1).uppercase(),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val DOCK_ICON_SIZE = 40.dp
+
+private val GREYSCALE = ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) })
+
+/** Icons that cannot be read are left out, and the dock shows a letter instead. */
+private fun loadDockIcons(context: Context, apps: List<LaunchableApp>, sizePx: Int): Map<String, ImageBitmap> {
+    val pm = context.packageManager
+    val icons = HashMap<String, ImageBitmap>(apps.size)
+    for (app in apps) {
+        try {
+            icons[app.packageName] = pm.getApplicationIcon(app.packageName)
+                .toBitmap(sizePx, sizePx)
+                .asImageBitmap()
+        } catch (_: PackageManager.NameNotFoundException) {
+            // Uninstalled since the list was built.
+        } catch (_: RuntimeException) {
+            // A broken or oversized icon resource in someone else's APK.
+        }
+    }
+    return icons
 }
 
 @Composable
@@ -249,7 +366,7 @@ private fun AppRow(
  * One step below [labelStyle]. The dock follows the App name size setting, so a
  * reader who sized the list up does not get a dock that stayed small, but it
  * trails the list by a step: five names across at the list's own size would
- * wrap the dock to three rows and eat the list it sits under.
+ * crowd five names into the one-line dock.
  */
 @Composable
 private fun dockLabelStyle(size: TextSize): TextStyle = when (size) {

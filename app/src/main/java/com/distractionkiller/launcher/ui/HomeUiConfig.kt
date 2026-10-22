@@ -1,6 +1,7 @@
 package com.distractionkiller.launcher.ui
 
 import com.distractionkiller.launcher.data.ClockFormat
+import com.distractionkiller.launcher.data.DockStyle
 import com.distractionkiller.launcher.data.Prefs
 import com.distractionkiller.launcher.data.TextSize
 
@@ -21,6 +22,7 @@ data class HomeUiConfig(
     val showSearchBar: Boolean,
     val showLaunchCounts: Boolean,
     val dockEnabled: Boolean,
+    val dockStyle: DockStyle,
     /** Raw preference order. Not yet checked against what is visible, see HomeScreen. */
     val dockPackages: List<String>,
     /** null when the focus note is switched off. */
@@ -40,6 +42,7 @@ data class HomeUiConfig(
             showSearchBar = prefs.showSearchBar,
             showLaunchCounts = prefs.showLaunchCounts,
             dockEnabled = prefs.dockEnabled,
+            dockStyle = prefs.dockStyle,
             dockPackages = prefs.dockPackages,
             focusNote = prefs.focusNoteText.trim().takeIf { prefs.focusNoteEnabled && it.isNotEmpty() },
         )

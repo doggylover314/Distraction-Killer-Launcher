@@ -10,5 +10,8 @@ enum class TextSize { SMALL, MEDIUM, LARGE }
 
 enum class ClockFormat { SYSTEM, HOUR_12, HOUR_24 }
 
+/** How the dock draws its apps: names like the list, or small greyscale icons. */
+enum class DockStyle { TEXT, ICONS }
+
 internal inline fun <reified T : Enum<T>> enumFromStored(value: String?, default: T): T =
     enumValues<T>().firstOrNull { it.name == value } ?: default
